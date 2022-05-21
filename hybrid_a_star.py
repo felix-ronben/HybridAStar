@@ -24,7 +24,7 @@ except:
 XY_GRID_RESOLUTION = 2.0  # [m]
 YAW_GRID_RESOLUTION = np.deg2rad(15.0)  # [rad]
 MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
-N_STEER = 20.0  # number of steer command
+N_STEER = 20  # number of steer command
 H_COST = 1.0
 VR = 1.0  # robot radius
 
