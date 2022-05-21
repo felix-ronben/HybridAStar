@@ -14,9 +14,9 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("../ReedsSheppPath/")
 try:
-    from a_star import dp_planning  # , calc_obstacle_map
+    from a_star_change_move import dp_planning  # , calc_obstacle_map
     import reeds_shepp_path_planning as rs
-    from car import move, check_car_collision, MAX_STEER, WB, plot_car
+    from car_change_move import move, check_car_collision, MAX_STEER, WB, plot_car
 except:
     raise
 
@@ -24,7 +24,7 @@ except:
 XY_GRID_RESOLUTION = 2.0  # [m]
 YAW_GRID_RESOLUTION = np.deg2rad(15.0)  # [rad]
 MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
-N_STEER = 20  # number of steer command
+N_STEER = 20.0  # number of steer command
 H_COST = 1.0
 VR = 1.0  # robot radius
 
@@ -35,6 +35,7 @@ STEER_COST = 1.0  # steer angle change penalty cost
 H_COST = 5.0  # Heuristic cost
 
 show_animation = True
+
 
 
 class Node:
@@ -131,20 +132,25 @@ class Config:
 
 def calc_motion_inputs():
 
-    for steer in np.concatenate((np.linspace(-MAX_STEER, MAX_STEER, N_STEER),[0.0])):
-        for d in [1, -1]:
+    for steer in np.concatenate((np.linspace(-MAX_STEER, MAX_STEER, N_STEER), [0.0])):
+        for d in [1]:
             yield [steer, d]
 
 
-def get_neighbors(current, config, ox, oy, kdtree):
+def get_neighbors(current, config, ox, oy, kdtree, closelist):
 
     for steer, d in calc_motion_inputs():
-        node = calc_next_node(current, steer, d, config, ox, oy, kdtree)
+        node = calc_next_node(current, steer, d, config, ox, oy, kdtree, closelist)
         if node and verify_index(node, config):
             yield node
 
 
-def calc_next_node(current, steer, direction, config, ox, oy, kdtree):
+def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist):
+
+    if current.pind != None:
+        cp = closelist[current.pind]
+        if cp.pind != None:
+            cpp = closelist[current.pind]
 
     x, y, yaw = current.xlist[-1], current.ylist[-1], current.yawlist[-1]
 
@@ -173,7 +179,8 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree):
     addedcost += STEER_COST * abs(steer)
 
     # steer change penalty
-    addedcost += STEER_CHANGE_COST * abs(current.steer - steer)# + int((abs(current.steer - steer)/(2*MAX_STEER/(N_STEER-1))))**10
+    # + int((abs(current.steer - steer)/(2*MAX_STEER/(N_STEER-1))))**10
+    addedcost += STEER_CHANGE_COST * abs(current.steer - steer)
 
     cost = current.cost + addedcost + arc_l
 
@@ -330,14 +337,15 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
                 plt.pause(0.001)
 
         isupdated = None
-        if 1: #abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
+        # abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
+        if 1:
             isupdated, fpath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
         if isupdated:
             break
 
-        for neighbor in get_neighbors(current, config, ox, oy, obkdtree):
+        for neighbor in get_neighbors(current, config, ox, oy, obkdtree, closedList):
             neighbor_index = calc_index(neighbor, config)
             if neighbor_index in closedList:
                 continue

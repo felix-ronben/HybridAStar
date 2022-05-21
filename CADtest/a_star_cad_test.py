@@ -11,7 +11,7 @@ See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
 import math
 import heapq
 import matplotlib.pyplot as plt
-import matplotlib.animation as ani
+import xlrd
 
 show_animation = False
 
@@ -41,7 +41,7 @@ def calc_final_path(ngoal, closedset, reso):
     return rx, ry
 
 
-def dp_planning(sx, sy, gx, gy, ox, oy, reso, rr):
+def dp_planning(sx, sy, gx, gy, ox, oy, reso, rr, ex, ey):
     """
     gx: goal x position [m]
     gx: goal x position [m]
@@ -50,14 +50,15 @@ def dp_planning(sx, sy, gx, gy, ox, oy, reso, rr):
     reso: grid resolution [m]
     rr: robot radius[m]
     """
-    global frame
-    global artists
+
     nstart = Node(round(sx / reso), round(sy / reso), 0.0, -1)
     ngoal = Node(round(gx / reso), round(gy / reso), 0.0, -1)
     ox = [iox / reso for iox in ox]
     oy = [ioy / reso for ioy in oy]
+    ex = [iex / reso for iex in ex]
+    ey = [iey / reso for iey in ey]
 
-    obmap, minx, miny, maxx, maxy, xw, yw = calc_obstacle_map(ox, oy, reso, rr)
+    obmap, ermap, minx, miny, maxx, maxy, xw, yw = calc_map(ox, oy, reso, rr, ex, ey)
 
     motion = get_motion_model()
 
@@ -79,18 +80,21 @@ def dp_planning(sx, sy, gx, gy, ox, oy, reso, rr):
 
         # show graph
         if show_animation:  # pragma: no cover
-            frame = plt.plot(current.x * reso, current.y * reso, "xc") + frame
+            plt.plot(current.x * reso, current.y * reso, "xc")
             if len(closedset.keys()) % 10 == 0:
-                artists.append(frame)
                 plt.pause(0.001)
 
         # Remove the item from the open set
 
         # expand search grid based on motion model
         for i, _ in enumerate(motion):
-            node = Node(current.x + motion[i][0],
-                        current.y + motion[i][1],
-                        current.cost + motion[i][2], c_id)
+            new_x = current.x + motion[i][0]
+            new_y = current.y + motion[i][1]
+            e_sign = 0 if ermap[new_x-minx][new_y-miny] else 1
+            new_cost = current.cost + motion[i][2] * e_sign
+            node = Node(new_x,
+                        new_y,
+                        new_cost, c_id)
             n_id = calc_index(node, xw, minx, miny)
 
             if n_id in closedset:
@@ -113,7 +117,7 @@ def dp_planning(sx, sy, gx, gy, ox, oy, reso, rr):
     rx, ry = calc_final_path(closedset[calc_index(
         nstart, xw, minx, miny)], closedset, reso)
 
-    return rx, ry, closedset
+    return rx, ry, closedset, ermap
 
 
 def calc_heuristic(n1, n2):
@@ -133,13 +137,13 @@ def verify_node(node, obmap, minx, miny, maxx, maxy):
     elif node.y >= maxy:
         return False
 
-    if obmap[node.x][node.y]:
+    if obmap[node.x-minx][node.y-miny]:
         return False
 
     return True
 
 
-def calc_obstacle_map(ox, oy, reso, vr):
+def calc_map(ox, oy, reso, vr, ex, ey):
 
     minx = round(min(ox))
     miny = round(min(oy))
@@ -151,6 +155,7 @@ def calc_obstacle_map(ox, oy, reso, vr):
 
     # obstacle map generation
     obmap = [[False for i in range(ywidth)] for i in range(xwidth)]
+    ermap = [[False for i in range(ywidth)] for i in range(xwidth)]
     for ix in range(xwidth):
         x = ix + minx
         for iy in range(ywidth):
@@ -160,9 +165,17 @@ def calc_obstacle_map(ox, oy, reso, vr):
                 d = math.sqrt((iox - x)**2 + (ioy - y)**2)
                 if d <= vr / reso:
                     obmap[ix][iy] = True
+                    plt.plot(x*reso,y*reso,'or')
+                    break
+            for iex, iey in zip(ex, ey):
+                d = math.sqrt((iex - x)**2 + (iey - y)**2)
+                if d <= vr / reso:
+                    ermap[ix][iy] = True
+                    plt.plot(x*reso,y*reso,'og')
+                    # print((ix+minx)*10,(iy+miny)*10)
                     break
 
-    return obmap, minx, miny, maxx, maxy, xwidth, ywidth
+    return obmap, ermap, minx, miny, maxx, maxy, xwidth, ywidth
 
 
 def calc_index(node, xwidth, xmin, ymin):
@@ -187,35 +200,59 @@ def main():
     print(__file__ + " start!!")
 
     # start and goal position
-    global frame
-    global artists
-    sx = 10.0  # [m]
-    sy = 10.0  # [m]
-    gx = 50.0  # [m]
-    gy = 50.0  # [m]
-    grid_size = 2.0  # [m]
-    robot_size = 1.0  # [m]
+    # sx = 15.0  # [m]
+    # sy = 15.0  # [m]
+    # gx = 50.0  # [m]
+    # gy = 50.0  # [m]
+    # grid_size = 2.0  # [m]
+    # robot_size = 1.0  # [m]
 
+    # ox, oy = [], []
+
+    # for i in range(60):
+    #     ox.append(i)
+    #     oy.append(0.0)
+    # for i in range(60):
+    #     ox.append(60.0)
+    #     oy.append(i)
+    # for i in range(61):
+    #     ox.append(i)
+    #     oy.append(60.0)
+    # for i in range(61):
+    #     ox.append(0.0)
+    #     oy.append(i)
+    # for i in range(40):
+    #     ox.append(20.0)
+    #     oy.append(i)
+    # for i in range(40):
+    #     ox.append(40.0)
+    #     oy.append(60.0 - i)
+
+    sx = 200.0  # [m]
+    sy = 1370.0  # [m]
+    gx = 1150.0  # [m]
+    gy = 200.0  # [m]
+    grid_size = 6.0  # [m]
+    robot_size = 5.0  # [m]
     ox, oy = [], []
-
-    for i in range(60):
-        ox.append(i)
-        oy.append(0.0)
-    for i in range(60):
-        ox.append(60.0)
-        oy.append(i)
-    for i in range(61):
-        ox.append(i)
-        oy.append(60.0)
-    for i in range(61):
-        ox.append(0.0)
-        oy.append(i)
-    for i in range(40):
-        ox.append(20.0)
-        oy.append(i)
-    for i in range(40):
-        ox.append(40.0)
-        oy.append(60.0 - i)
+    data_filename = './CADtest/line_points.xls'
+    work_Book = xlrd.open_workbook(data_filename)
+    sheet = work_Book.sheet_by_name('sheet1')
+    for i in range(0, sheet.nrows):
+        cells = sheet.row_values(i)
+        # 保留两位小数
+        ox.append(round(float(cells[0]), 2))
+        oy.append(round(float(cells[1]), 2))
+    
+    ex, ey = [], []
+    data_filename1 = './CADtest/line_exist.xls'
+    work_Book1 = xlrd.open_workbook(data_filename1)
+    sheet1 = work_Book1.sheet_by_name('sheet1')
+    for i in range(0, sheet1.nrows):
+        cells = sheet1.row_values(i)
+        # 保留两位小数
+        ex.append(round(float(cells[0]), 2))
+        ey.append(round(float(cells[1]), 2))
 
     if show_animation:  # pragma: no cover
         plt.plot(ox, oy, ".k")
@@ -224,22 +261,13 @@ def main():
         plt.grid(True)
         plt.axis("equal")
 
-    rx, ry, _ = dp_planning(sx, sy, gx, gy, ox, oy, grid_size, robot_size)
+    rx, ry, _, _ = dp_planning(sx, sy, gx, gy, ox, oy, grid_size, robot_size, ex, ey)
 
     if show_animation:  # pragma: no cover
-        frame = plt.plot(rx, ry, "-r") + frame
-        artists.append(frame)
+        plt.plot(rx, ry, "-r")
         plt.show()
 
 
 if __name__ == '__main__':
     show_animation = True
-    fig = plt.figure()
-    global frame
-    global artists
-    frame, artists = [], []
     main()
-    [artists.append(frame) for i in range (10)]
-    animation = ani.ArtistAnimation(fig = fig, artists=artists)
-    animation.save('a_star.gif',fps = 30)
-    

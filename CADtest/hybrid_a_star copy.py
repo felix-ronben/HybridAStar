@@ -12,27 +12,27 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 import sys
+import xlrd
 sys.path.append("../ReedsSheppPath/")
 try:
-    from a_star import dp_planning  # , calc_obstacle_map
+    from CADtest.a_star_cad_test import dp_planning  # , calc_obstacle_map
     import reeds_shepp_path_planning as rs
     from car import move, check_car_collision, MAX_STEER, WB, plot_car
 except:
     raise
 
 
-XY_GRID_RESOLUTION = 2.0  # [m]
-YAW_GRID_RESOLUTION = np.deg2rad(15.0)  # [rad]
-MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
-N_STEER = 20  # number of steer command
-H_COST = 1.0
-VR = 1.0  # robot radius
+XY_GRID_RESOLUTION = 7.0  # [m]
+YAW_GRID_RESOLUTION = np.deg2rad(3.0)  # [rad]
+MOTION_RESOLUTION = 0.5  # [m] path interporate resolution
+N_STEER = 14.0  # number of steer command
+VR = 8.0  # robot radius
 
-SB_COST = 10000.0  # switch back penalty cost
-BACK_COST = 5.0  # backward penalty cost
-STEER_CHANGE_COST = 5.0  # steer angle change penalty cost
-STEER_COST = 1.0  # steer angle change penalty cost
-H_COST = 5.0  # Heuristic cost
+SB_COST = 10000000.0  # switch back penalty cost
+BACK_COST = 10000000.0  # backward penalty cost
+STEER_CHANGE_COST = 1000.0  # steer angle change penalty cost
+STEER_COST = 200.0  # steer angle change penalty cost
+H_COST = 200.0  # Heuristic cost
 
 show_animation = True
 
@@ -132,19 +132,19 @@ class Config:
 def calc_motion_inputs():
 
     for steer in np.concatenate((np.linspace(-MAX_STEER, MAX_STEER, N_STEER),[0.0])):
-        for d in [1, -1]:
+        for d in [1]:
             yield [steer, d]
 
 
-def get_neighbors(current, config, ox, oy, kdtree):
+def get_neighbors(current, config, ox, oy, kdtree, ermap):
 
     for steer, d in calc_motion_inputs():
-        node = calc_next_node(current, steer, d, config, ox, oy, kdtree)
+        node = calc_next_node(current, steer, d, config, ox, oy, kdtree, ermap)
         if node and verify_index(node, config):
             yield node
 
 
-def calc_next_node(current, steer, direction, config, ox, oy, kdtree):
+def calc_next_node(current, steer, direction, config, ox, oy, kdtree, ermap):
 
     x, y, yaw = current.xlist[-1], current.ylist[-1], current.yawlist[-1]
 
@@ -175,7 +175,8 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree):
     # steer change penalty
     addedcost += STEER_CHANGE_COST * abs(current.steer - steer)# + int((abs(current.steer - steer)/(2*MAX_STEER/(N_STEER-1))))**10
 
-    cost = current.cost + addedcost + arc_l
+    e_sign = 0 if ermap[xind - config.minx][yind - config.miny] else 1
+    cost = current.cost + addedcost + arc_l * e_sign
 
     node = Node(xind, yind, yawind, d, xlist,
                 ylist, yawlist, [d],
@@ -281,7 +282,7 @@ def calc_rs_path_cost(rspath):
     return cost
 
 
-def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
+def hybrid_a_star_planning(start, goal, ox, oy, ex, ey, xyreso, yawreso):
     """
     start
     goal
@@ -304,8 +305,8 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
 
     openList, closedList = {}, {}
 
-    _, _, h_dp = dp_planning(nstart.xlist[-1], nstart.ylist[-1],
-                             ngoal.xlist[-1], ngoal.ylist[-1], ox, oy, xyreso, VR)
+    _, _, h_dp, ermap = dp_planning(nstart.xlist[-1], nstart.ylist[-1],
+                             ngoal.xlist[-1], ngoal.ylist[-1], ox, oy, xyreso, VR, ex, ey)
 
     pq = []
     openList[calc_index(nstart, config)] = nstart
@@ -326,18 +327,18 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
 
         if show_animation:  # pragma: no cover
             plt.plot(current.xlist[-1], current.ylist[-1], "xc")
-            if len(closedList.keys()) % 2 == 0:
+            if len(closedList.keys()) % 10 == 0:
                 plt.pause(0.001)
 
         isupdated = None
-        if 1: #abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
+        if abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 100:
             isupdated, fpath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
         if isupdated:
             break
 
-        for neighbor in get_neighbors(current, config, ox, oy, obkdtree):
+        for neighbor in get_neighbors(current, config, ox, oy, obkdtree, ermap):
             neighbor_index = calc_index(neighbor, config)
             if neighbor_index in closedList:
                 continue
@@ -347,6 +348,7 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
                     pq, (calc_cost(neighbor, h_dp, ngoal, config),
                          neighbor_index))
                 openList[neighbor_index] = neighbor
+            print("hi")
 
     path = get_final_path(closedList, fpath, nstart, config)
     return path
@@ -410,30 +412,53 @@ def calc_index(node, c):
 def main():
     print("Start Hybrid A* planning")
 
-    ox, oy = [], []
+    # ox, oy = [], []
 
-    for i in range(60):
-        ox.append(i)
-        oy.append(0.0)
-    for i in range(60):
-        ox.append(60.0)
-        oy.append(i)
-    for i in range(61):
-        ox.append(i)
-        oy.append(60.0)
-    for i in range(61):
-        ox.append(0.0)
-        oy.append(i)
-    for i in range(30):
-        ox.append(20.0)
-        oy.append(i)
-    for i in range(40):
-        ox.append(40.0)
-        oy.append(60.0 - i)
+    # for i in range(60):
+    #     ox.append(i)
+    #     oy.append(0.0)
+    # for i in range(60):
+    #     ox.append(60.0)
+    #     oy.append(i)
+    # for i in range(61):
+    #     ox.append(i)
+    #     oy.append(60.0)
+    # for i in range(61):
+    #     ox.append(0.0)
+    #     oy.append(i)
+    # for i in range(30):
+    #     ox.append(20.0)
+    #     oy.append(i)
+    # for i in range(40):
+    #     ox.append(40.0)
+    #     oy.append(60.0 - i)
+
+    ox, oy = [], []
+    data_filename = 'line_points.xls'
+    work_Book = xlrd.open_workbook(data_filename)
+    sheet = work_Book.sheet_by_name('sheet1')
+    ox = []
+    oy = []
+    for i in range(0, sheet.nrows):
+        cells = sheet.row_values(i)
+        # 保留两位小数
+        ox.append(round(float(cells[0]), 2))
+        oy.append(round(float(cells[1]), 2))
+    
+    ex, ey = [], []
+    data_filename1 = 'line_exist.xls'
+    work_Book1 = xlrd.open_workbook(data_filename1)
+    sheet1 = work_Book1.sheet_by_name('sheet1')
+    for i in range(0, sheet1.nrows):
+        cells = sheet1.row_values(i)
+        # 保留两位小数
+        ex.append(round(float(cells[0]), 2))
+        ey.append(round(float(cells[1]), 2))
 
     # Set Initial parameters
-    start = [10.0, 15.0, np.deg2rad(45.0)]
-    goal = [50.0, 50.0, np.deg2rad(45.0)]
+    start = [200.0, 1370.0, np.deg2rad(0.0)]
+    goal = [1150.0, 200.0, np.deg2rad(-70.0)]
+    # goal = [750.0, 1000.0, np.deg2rad(-70.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -443,7 +468,7 @@ def main():
     plt.axis("equal")
 
     path = hybrid_a_star_planning(
-        start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
+        start, goal, ox, oy, ex, ey, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
 
     x = path.xlist
     y = path.ylist
