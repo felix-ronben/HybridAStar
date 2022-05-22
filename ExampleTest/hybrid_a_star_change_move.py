@@ -7,12 +7,12 @@ author: Zheng Zh (@Zhengzh)
 """
 
 import heapq
-import re
 import scipy.spatial
 import numpy as np
 import math
 import matplotlib.pyplot as plt
 import sys
+import xlrd
 sys.path.append("../ReedsSheppPath/")
 try:
     from a_star_change_move import dp_planning  # , calc_obstacle_map
@@ -22,20 +22,20 @@ except:
     raise
 
 
-XY_GRID_RESOLUTION = 2.0  # [m]
-YAW_GRID_RESOLUTION = np.deg2rad(15.0)  # [rad]
-MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
+XY_GRID_RESOLUTION = 6.0  # [m]
+YAW_GRID_RESOLUTION = np.deg2rad(3.0)  # [rad]
+MOTION_RESOLUTION = 0.3  # [m] path interporate resolution
 N_STEER = 20  # number of steer command
-H_COST = 1.0
-VR = 1.0  # robot radius
+VR = 7.0  # robot radius
 
 SB_COST = 10000.0  # switch back penalty cost
 BACK_COST = 5.0  # backward penalty cost
 STEER_CHANGE_COST = 5.0  # steer angle change penalty cost
 STEER_COST = 1.0  # steer angle change penalty cost
-H_COST = 5.0  # Heuristic cost
+H_COST = XY_GRID_RESOLUTION*10  # Heuristic cost
 
-MIN_SEG = 3  # 最小曲线长度的线元段数
+MAX_STEER = 0.022
+MIN_SEG = 6  # 最小曲线长度的线元段数
 show_animation = True
 
 
@@ -139,15 +139,15 @@ def calc_motion_inputs():
             yield [steer, d]
 
 
-def get_neighbors(current, config, ox, oy, kdtree, closelist):
+def get_neighbors(current, config, ox, oy, kdtree, closelist, ermap):
 
     for steer, d in calc_motion_inputs():
-        node = calc_next_node(current, steer, d, config, ox, oy, kdtree, closelist)
+        node = calc_next_node(current, steer, d, config, ox, oy, kdtree, closelist, ermap)
         if node and verify_index(node, config):
             yield node
 
 
-def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist):
+def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist, ermap):
 
     min_seg = MIN_SEG
     count, tmp = 0, current  # count 用来判断当前曲线是否满足约束，能否开始RS拟合
@@ -186,13 +186,14 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist)
         addedcost += SB_COST
 
     # steer penalty
-    addedcost += STEER_COST * abs(steer)
+    addedcost += STEER_COST * abs(steer)*0.1  # 基本无作用，用来在角度分辨率中尽量选择直线
 
     # steer change penalty
     # + int((abs(current.steer - steer)/(2*MAX_STEER/(N_STEER-1))))**10
-    addedcost += STEER_CHANGE_COST * abs(current.steer - steer)
+    # addedcost += STEER_CHANGE_COST * abs(current.steer - steer)
 
-    cost = current.cost + addedcost + arc_l
+    e_sign = 0 if ermap[xind - config.minx][yind - config.miny] else 1
+    cost = current.cost + addedcost + arc_l*e_sign
 
     node = Node(xind, yind, yawind, d, xlist,
                 ylist, yawlist, [d],
@@ -218,12 +219,14 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
     gy = goal.ylist[-1]
     gyaw = goal.yawlist[-1]
 
-    max_curvature = math.tan(MAX_STEER) / WB
-    paths = rs.calc_paths(sx, sy, syaw, gx, gy, gyaw,
-                          max_curvature, step_size=MOTION_RESOLUTION)
-    
+    n_curvature, paths_collect = round(N_STEER/2), []
+    for i in range(1,n_curvature+1):  #  所有曲率均计算R-S曲线
+        max_curvature = math.tan(MAX_STEER*(i/n_curvature)) / WB
+        paths = rs.calc_paths(sx, sy, syaw, gx, gy, gyaw, max_curvature, step_size=MOTION_RESOLUTION)
+        paths_collect = paths_collect + paths
+
     paths_selected = []
-    for path in paths:
+    for path in paths_collect:
         if path.lengths[0] >= 0 and path.lengths[1] >= 0 and path.lengths[2] >= 0:  # 退化为杜宾曲线
             cur_flag = True
             for i in range(3):
@@ -231,7 +234,7 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
                     cur_flag = False
             if cur_flag:
                 paths_selected.append(path)
-    paths = paths_selected  
+    paths = paths_selected
 
     if not paths:
         return None
@@ -322,7 +325,7 @@ def check_rs_permition(current, closedList, ngoal):
     else:
         return True
 
-def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
+def hybrid_a_star_planning(start, goal, ox, oy, ex, ey, xyreso, yawreso):
     """
     start
     goal
@@ -345,8 +348,8 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
 
     openList, closedList = {}, {}
 
-    _, _, h_dp = dp_planning(nstart.xlist[-1], nstart.ylist[-1],
-                             ngoal.xlist[-1], ngoal.ylist[-1], ox, oy, xyreso, VR)
+    _, _, h_dp, ermap = dp_planning(nstart.xlist[-1], nstart.ylist[-1],
+                             ngoal.xlist[-1], ngoal.ylist[-1], ox, oy, xyreso, VR, ex, ey)
 
     pq = []
     openList[calc_index(nstart, config)] = nstart
@@ -372,14 +375,15 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
 
         isupdated = None
         # abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
-        if check_rs_permition(current, closedList, ngoal):
+        if check_rs_permition(current, closedList, ngoal) and \
+            abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 170:
             isupdated, fpath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
         if isupdated:
             break
 
-        for neighbor in get_neighbors(current, config, ox, oy, obkdtree, closedList):
+        for neighbor in get_neighbors(current, config, ox, oy, obkdtree, closedList, ermap):
             neighbor_index = calc_index(neighbor, config)
             if neighbor_index in closedList:
                 continue
@@ -453,29 +457,31 @@ def main():
     print("Start Hybrid A* planning")
 
     ox, oy = [], []
-
-    for i in range(60):
-        ox.append(i)
-        oy.append(0.0)
-    for i in range(60):
-        ox.append(60.0)
-        oy.append(i)
-    for i in range(61):
-        ox.append(i)
-        oy.append(60.0)
-    for i in range(61):
-        ox.append(0.0)
-        oy.append(i)
-    for i in range(30):
-        ox.append(20.0)
-        oy.append(i)
-    for i in range(40):
-        ox.append(40.0)
-        oy.append(60.0 - i)
+    data_filename = './ExampleTest/line_points.xls'
+    work_Book = xlrd.open_workbook(data_filename)
+    sheet = work_Book.sheet_by_name('sheet1')
+    ox = []
+    oy = []
+    for i in range(0, sheet.nrows):
+        cells = sheet.row_values(i)
+        # 保留两位小数
+        ox.append(round(float(cells[0]), 2))
+        oy.append(round(float(cells[1]), 2))
+    
+    ex, ey = [], []
+    data_filename1 = './ExampleTest/line_exist.xls'
+    work_Book1 = xlrd.open_workbook(data_filename1)
+    sheet1 = work_Book1.sheet_by_name('sheet1')
+    for i in range(0, sheet1.nrows):
+        cells = sheet1.row_values(i)
+        # 保留两位小数
+        ex.append(round(float(cells[0]), 2))
+        ey.append(round(float(cells[1]), 2))
 
     # Set Initial parameters
-    start = [10.0, 15.0, np.deg2rad(45.0)]
-    goal = [50.0, 50.0, np.deg2rad(45.0)]
+    start = [200.0, 1370.0, np.deg2rad(0.0)]
+    # start = [1025.0, 550.0, np.deg2rad(-45.0)]
+    goal = [1150.0, 200.0, np.deg2rad(-70.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -485,7 +491,7 @@ def main():
     plt.axis("equal")
 
     path = hybrid_a_star_planning(
-        start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
+        start, goal, ox, oy, ex, ey, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
 
     x = path.xlist
     y = path.ylist
