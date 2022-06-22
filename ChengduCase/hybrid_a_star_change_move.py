@@ -339,6 +339,10 @@ def hybrid_a_star_planning(start, goal, ox, oy, ex, ey, xyreso, yawreso):
 
     obkdtree = KDTree(np.vstack((tox, toy)).T)
 
+    """
+    config还没有改，前面的已改
+    TODO：从这里开始，
+    """
     config = Config(tox, toy, xyreso, yawreso)
 
     nstart = Node(round(start[0] / xyreso), round(start[1] / xyreso), round(start[2] / yawreso),
