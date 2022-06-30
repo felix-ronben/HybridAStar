@@ -23,6 +23,7 @@ class Path:
         self.y = []
         self.yaw = []
         self.directions = []
+        self.curvature = None
 
 
 def plot_arrow(x, y, yaw, length=1.0, width=0.5, fc="r", ec="k"):
@@ -346,6 +347,7 @@ def calc_paths(sx, sy, syaw, gx, gy, gyaw, maxc, step_size):
         path.directions = directions
         path.lengths = [l / maxc for l in path.lengths]
         path.L = path.L / maxc
+        path.curvature = maxc
 
     #  print(paths)
 

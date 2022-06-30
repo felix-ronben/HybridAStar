@@ -11,19 +11,20 @@ import re
 import scipy.spatial
 import numpy as np
 import math
+import cmath
 import matplotlib.pyplot as plt
-import sys
-sys.path.append("../ReedsSheppPath/")
+# import sys
+# sys.path.append("./change_move/reeds_shepp_path_planning")
 try:
     from a_star_change_move import dp_planning  # , calc_obstacle_map
     import reeds_shepp_path_planning as rs
-    from car_change_move import move, check_car_collision, MAX_STEER, WB, plot_car
+    from car_change_move import move, check_car_collision, MAX_STEER, WB, plot_car, new_move, spr_move1, spr_move2, r_move
 except:
     raise
 
 
-XY_GRID_RESOLUTION = 2.0  # [m]
-YAW_GRID_RESOLUTION = np.deg2rad(15.0)  # [rad]
+XY_GRID_RESOLUTION = 1.0  # [m]
+YAW_GRID_RESOLUTION = np.deg2rad(10.0)  # [rad]
 MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
 N_STEER = 20  # number of steer command
 H_COST = 1.0
@@ -33,9 +34,11 @@ SB_COST = 10000.0  # switch back penalty cost
 BACK_COST = 5.0  # backward penalty cost
 STEER_CHANGE_COST = 5.0  # steer angle change penalty cost
 STEER_COST = 1.0  # steer angle change penalty cost
-H_COST = 5.0  # Heuristic cost
+H_COST = 1.5  # Heuristic cost
 
-MIN_SEG = 3  # 最小曲线长度的线元段数
+LEN_SPIRAL = 2
+
+MIN_SEG = 4  # 最小曲线长度的线元段数
 show_animation = True
 
 
@@ -44,7 +47,7 @@ class Node:
 
     def __init__(self, xind, yind, yawind, direction,
                  xlist, ylist, yawlist, directions,
-                 steer=0.0, pind=None, cost=None):
+                 steer=0.0, pind=None, cost=None, catogory=None):
         self.xind = xind
         self.yind = yind
         self.yawind = yawind
@@ -56,16 +59,18 @@ class Node:
         self.steer = steer
         self.pind = pind
         self.cost = cost
+        self.catogory = catogory  ## -1表示缓和曲线；0表示直线； 1表示曲线
 
 
 class Path:
 
-    def __init__(self, xlist, ylist, yawlist, directionlist, cost):
+    def __init__(self, xlist, ylist, yawlist, directionlist, cost, steer=None):
         self.xlist = xlist
         self.ylist = ylist
         self.yawlist = yawlist
         self.directionlist = directionlist
         self.cost = cost
+        self.steer = steer
 
 
 class KDTree:
@@ -135,8 +140,7 @@ class Config:
 def calc_motion_inputs():
 
     for steer in np.concatenate((np.linspace(-MAX_STEER, MAX_STEER, N_STEER), [0.0])):
-        for d in [1]:
-            yield [steer, d]
+        yield [steer, 1]
 
 
 def get_neighbors(current, config, ox, oy, kdtree, closelist):
@@ -151,6 +155,7 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist)
 
     min_seg = MIN_SEG
     count, tmp = 0, current  # count 用来判断当前曲线是否满足约束，能否开始RS拟合
+    
     while (tmp.pind != None and tmp.steer != 0):
         tst = closelist[tmp.pind]
         count += 1
@@ -159,15 +164,37 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist)
         tmp = tst  # 检测相同曲率的圆曲线段数
     if (count > 0 and count < min_seg) and steer != current.steer:
         return None  # 不足曲线长度约束按原半径继续探索
-    if count >= min_seg and steer*current.steer > 0:
-        return None  # 满足最小曲线半径后如果变化，只能反向，防止C形曲线
-        
-    x, y, yaw = current.xlist[-1], current.ylist[-1], current.yawlist[-1]
+    
+    if count >= min_seg and steer*current.steer != 0:
+        return None  # 曲线间必须由缓和曲线或直线连接
 
-    arc_l = XY_GRID_RESOLUTION * 1.5
+    if current.catogory is not None and current.steer == 0:
+        if closelist[current.pind].steer*steer > 0:
+            return None  # 不允许C形曲线
+        
+    if steer == 0 and current.steer == 0:  # 判断当前节点的类型，-2为缓和曲线（圆到直）
+        cato = 0                           #,-1为缓和曲线（直到圆），0为直线，1为曲线
+    elif (steer != 0 and current.steer == 0):
+        cato = -1
+    elif (steer == 0 and current.steer != 0):
+        cato = -2
+    elif steer != 0 and current.steer != 0:
+        cato = 1
+    else:
+        cato = None
+
+    x, y, yaw = current.xlist[-1], current.ylist[-1], current.yawlist[-1]
+    x_old, y_old, yaw_old = x, y, yaw
+
+    arc_l = XY_GRID_RESOLUTION * 1.5 if cato != -1 else LEN_SPIRAL
     xlist, ylist, yawlist = [], [], []
     for dist in np.arange(0, arc_l, MOTION_RESOLUTION):
-        x, y, yaw = move(x, y, yaw, MOTION_RESOLUTION * direction, steer)
+        if cato == -1:
+            x, y, yaw = spr_move1(x_old, y_old, yaw_old, dist+MOTION_RESOLUTION, steer, LEN_SPIRAL)
+        elif cato == -2:
+            x, y, yaw = spr_move2(x_old, y_old, yaw_old, dist+MOTION_RESOLUTION, current.steer, LEN_SPIRAL)
+        else:
+            x, y, yaw = new_move(x, y, yaw, MOTION_RESOLUTION * direction, steer)
         xlist.append(x)
         ylist.append(y)
         yawlist.append(yaw)
@@ -197,7 +224,7 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist)
     node = Node(xind, yind, yawind, d, xlist,
                 ylist, yawlist, [d],
                 pind=calc_index(current, config),
-                cost=cost, steer=steer)
+                cost=cost, steer=steer, catogory=cato)
 
     return node
 
@@ -218,12 +245,14 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
     gy = goal.ylist[-1]
     gyaw = goal.yawlist[-1]
 
-    max_curvature = math.tan(MAX_STEER) / WB
-    paths = rs.calc_paths(sx, sy, syaw, gx, gy, gyaw,
-                          max_curvature, step_size=MOTION_RESOLUTION)
-    
+    n_curvature, paths_collect = round(N_STEER/2), []
+    for i in range(1,n_curvature+1):  #  所有曲率均计算R-S曲线
+        max_curvature = math.tan(MAX_STEER*(i/n_curvature)) / WB
+        paths = rs.calc_paths(sx, sy, syaw, gx, gy, gyaw, max_curvature, step_size=MOTION_RESOLUTION)
+        paths_collect = paths_collect + paths
+
     paths_selected = []
-    for path in paths:
+    for path in paths_collect:
         if path.lengths[0] >= 0 and path.lengths[1] >= 0 and path.lengths[2] >= 0:  # 退化为杜宾曲线
             cur_flag = True
             for i in range(3):
@@ -231,7 +260,7 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
                     cur_flag = False
             if cur_flag:
                 paths_selected.append(path)
-    paths = paths_selected  
+    paths = paths_selected
 
     if not paths:
         return None
@@ -239,6 +268,47 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
     best_path, best = None, None
 
     for path in paths:
+        m1_x, m1_y, m1_yaw = 0, 0, 0   # 将圆RS曲线变换为缓和曲线+曲线+直线的组合，这里修改list坐标
+        m2_x, m2_y, m2_yaw = 0, 0, 0
+        r = 1/path.curvature
+        ## TODO: 做到这儿，7月1日凌晨，RS曲线增设缓和曲线，目前写完一段（共三段，e.g.，LSR）的代码
+        ## TODO：程序需要模块化，并且检验其正确性
+        if path.ctypes[0] == 'R':
+            dis = MOTION_RESOLUTION
+            m1_x, m1_y, m1_yaw = r_move(sx, sy, syaw, path.lengths[0], -r)
+            rr = get_r(syaw, m1_yaw, r)
+            while dis <= LEN_SPIRAL:
+                x, y, yam = spr_move1(sx, sy, syaw, dis, 0, LEN_SPIRAL, L=WB, radi=-rr)
+                plt.plot(x,y,'xy')
+                x0, y0, yam0 = spr_move1(m1_x, m1_y, m1_yaw+np.pi, dis, 0, LEN_SPIRAL, L=WB, radi=rr)
+                plt.plot(x0,y0,'xb')
+                dis += MOTION_RESOLUTION
+            while (x0-x)+(y0-y)>0.1:
+                x, y, yam = r_move(x, y, yam, MOTION_RESOLUTION, -rr)
+                plt.plot(x,y,'xr')
+        elif path.ctypes[0] == 'L':
+            dis = MOTION_RESOLUTION
+            m1_x, m1_y, m1_yaw = r_move(sx, sy, syaw, path.lengths[0], r)
+            rr = get_r(syaw, m1_yaw, r)
+            while dis <= LEN_SPIRAL:
+                x, y, yam = spr_move1(sx, sy, syaw, dis, 0, LEN_SPIRAL, L=WB, radi=rr)
+                plt.plot(x,y,'xy')
+                x0, y0, yam0 = spr_move1(m1_x, m1_y, m1_yaw+np.pi, dis, 0, LEN_SPIRAL, L=WB, radi=-rr)
+                plt.plot(x0,y0,'xb')
+                dis += MOTION_RESOLUTION
+            while (x0-x)+(y0-y)>0.1:
+                x, y, yam = r_move(x, y, yam, MOTION_RESOLUTION, rr)
+                plt.plot(x,y,'xr')
+        else:
+            m1_x, m1_y, m1_yaw = new_move(sx, sy, syaw, path.lengths[0], 0)
+        
+        if path.ctypes[1] != 'R':
+            m2_x, m2_y, m2_yaw = r_move(m1_x, m1_y, m1_yaw, path.lengths[1], -r)
+        elif path.ctypes[1] != 'L':
+            m2_x, m2_y, m2_yaw = r_move(m1_x, m1_y, m1_yaw, path.lengths[1], r)
+        else:
+            m2_x, m2_y, m2_yaw = new_move(m1_x, m1_y, m1_yaw, path.lengths[1], 0)
+
         if check_car_collision(path.x, path.y, path.yaw, ox, oy, kdtree):
             cost = calc_rs_path_cost(path)
             if not best or best > cost:
@@ -246,6 +316,56 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
                 best_path = path
 
     return best_path
+
+
+def get_r(syaw, gyaw, r):  #  RS曲线的圆弧段修正为缓和曲线+圆弧，此函数用于求新的曲线半径
+    alpha = abs(gyaw - syaw)
+    ta2 = np.tan(alpha/2)
+    TT = r*ta2
+    ls = LEN_SPIRAL
+    # ls*ta2*(1+(1/24)*kk**2-(1/2688)*kk**4)+ls*(0.5*kk-(1/240)*kk**3) - TT*kk == 0 # 其中ls/R=k
+    a = -(1/2688)*ls*ta2
+    b = -(1/240)*ls
+    c = (1/24)*ls*ta2
+    d = 0.5*ls-TT
+    e = ls*ta2
+    P = (c**2+12*a*e-3*b*d)/9
+    Q = (27*a*d**2+2*c**3+27*b**2*e-72*a*c*e-9*b*c*d)/54
+    D = cmath.sqrt(Q**2-P**3)
+    u = (Q+D)**(1/3) if abs(Q+D)>=abs(Q-D) else (Q-D)**(1/3)
+    v = 0 if u==0 else P/u
+    w = complex(-0.5, 3**0.5/2)
+    m = []
+    M = []
+    flag = 0
+    for i in range(3):
+        x = cmath.sqrt(b**2-8*a*c/3+4*a*(w**i*u+w**(3-i)*v))
+        m.append(x)
+        M.append(abs(x))
+        if m == 0:
+            flag = flag+1
+    if flag == 3:
+        mm = 0
+        S = b**2-8*a*c/3
+        T = 0
+    else:
+        t = M.index(max(M))
+        mm = m[t]
+        S = 2*b**2-16*a*c/3-4*a*(w**t*u+w**(3-t)*v)
+        T = (8*a*b*c-16*a**2*d-2*b**3)/mm
+    x1 = (-b-mm+cmath.sqrt(S-T))/(4*a)
+    R = ls/abs(x1)
+    x2 = (-b-mm-cmath.sqrt(S-T))/(4*a)
+    if abs(R-r)>abs(ls/abs(x2)-r):
+        R = ls/abs(x2)
+    x3 = (-b+mm+cmath.sqrt(S+T))/(4*a)
+    if abs(R-r)>abs(ls/abs(x3)-r):
+        R = ls/abs(x3)
+    x4 = (-b+mm-cmath.sqrt(S+T))/(4*a)
+    if abs(R-r)>abs(ls/abs(x4)-r):
+        R = ls/abs(x4)
+        
+    return R
 
 
 def update_node_with_analystic_expantion(current, goal,
@@ -372,7 +492,8 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
 
         isupdated = None
         # abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
-        if check_rs_permition(current, closedList, ngoal):
+        if check_rs_permition(current, closedList, ngoal) and \
+            abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 40:
             isupdated, fpath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
@@ -415,6 +536,13 @@ def get_final_path(closed, ngoal, nstart, config):
         ryaw.extend(list(reversed(n.yawlist)))
         direction.extend(list(reversed(n.directions)))
 
+        if n.catogory == 0:
+            plt.plot(n.xlist, n.ylist, ".r")
+        elif n.catogory == 1:
+            plt.plot(n.xlist, n.ylist, ".g")
+        elif n.catogory == -1 or n.catogory == -2:
+            plt.plot(n.xlist, n.ylist, ".b")
+
         nid = n.pind
 
     rx = list(reversed(rx))
@@ -454,28 +582,28 @@ def main():
 
     ox, oy = [], []
 
-    for i in range(60):
+    for i in range(160):
         ox.append(i)
         oy.append(0.0)
     for i in range(60):
-        ox.append(60.0)
+        ox.append(160.0)
         oy.append(i)
-    for i in range(61):
+    for i in range(161):
         ox.append(i)
         oy.append(60.0)
     for i in range(61):
         ox.append(0.0)
         oy.append(i)
-    for i in range(30):
-        ox.append(20.0)
+    for i in range(40):
+        ox.append(50.0)
         oy.append(i)
     for i in range(40):
-        ox.append(40.0)
+        ox.append(120.0)
         oy.append(60.0 - i)
 
     # Set Initial parameters
     start = [10.0, 15.0, np.deg2rad(45.0)]
-    goal = [50.0, 50.0, np.deg2rad(45.0)]
+    goal = [150.0, 50.0, np.deg2rad(45.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -491,14 +619,18 @@ def main():
     y = path.ylist
     yaw = path.yawlist
 
-    for ix, iy, iyaw in zip(x, y, yaw):
-        plt.cla()
-        plt.plot(ox, oy, ".k")
-        plt.plot(x, y, "-r", label="Hybrid A* path")
-        plt.grid(True)
-        plt.axis("equal")
-        plot_car(ix, iy, iyaw)
-        plt.pause(0.0001)
+    # for ix, iy, iyaw in zip(x, y, yaw):
+    #     # plt.cla()
+    #     plt.plot(ox, oy, ".k")
+    #     plt.plot(x, y, ".r", label="Hybrid A* path")
+    #     plt.grid(True)
+    #     plt.axis("equal")
+    #     plot_car(ix, iy, iyaw)
+    #     plt.pause(0.0001)
+    plt.plot(ox, oy, ".k")
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
 
     print(__file__ + " done!!")
 

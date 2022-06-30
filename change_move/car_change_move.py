@@ -7,8 +7,9 @@ author: Zheng Zh (@Zhengzh)
 """
 
 
+from xml.etree.ElementTree import PI
 import matplotlib.pyplot as plt
-from math import sqrt, cos, sin, tan, pi, atan
+from math import radians, sqrt, cos, sin, tan, pi, atan
 
 WB = 3.  # rear to front wheel
 W = 2.  # width of car
@@ -92,6 +93,74 @@ def move(x, y, yaw, distance, steer, L=WB):
     x += distance * cos(yaw)
     y += distance * sin(yaw)
     yaw += pi_2_pi(distance * tan(steer) / L)  # distance/2
+
+    return x, y, yaw
+
+
+def new_move(x, y, yaw, distance, steer, L=WB):
+    if steer != 0:
+        r = L / tan(steer)
+        theta = pi_2_pi(distance / r)
+        tmp_x = r * sin(theta)
+        tmp_y = r - r*cos(theta)
+        new_r = sqrt(tmp_x**2 + tmp_y**2)
+        theta0 = yaw + atan(tmp_y/tmp_x)
+        x += new_r * cos(theta0)
+        y += new_r * sin(theta0)
+        yaw += theta
+    else:
+        x += distance*cos(yaw)
+        y += distance*sin(yaw)
+
+    return x, y, yaw
+
+    
+def spr_move1(x, y, yaw, distance, steer, len_s, L=WB, radi=None):
+    ls, l = len_s, distance
+    r = L / tan(steer) if radi is None else radi
+    c = l*(1-(l**4)/(90*r**2*ls**2)+(l**8)/(22680*r**4*ls**4))  #-(79*l**12)/(2043241200*r**6*ls**6))  # 弦长
+    theta = (l**2)/(r*ls)*(1/6-(l**4)/(2835*r**2*ls**2)-(l**8)/(467775*r**4*ls**4))  #-(23*l**12)/(1915538625*r**6*ls**6))  # 弦切角
+    beta = (l**2)/(2*r*ls)  # 切线角
+    theta0 = yaw + theta
+    x += c * cos(theta0)
+    y += c * sin(theta0)
+    yaw += beta
+
+    return x, y, yaw
+
+
+def spr_move2(x, y, yaw, distance, steer, len_s, L=WB):
+    ls, l = len_s, len_s
+    r = L / tan(steer)
+    c = l*(1-(l**2)/(90*r**2)+(l**4)/(22680*r**4))  #-(79*l**6)/(2043241200*r**6))  # 弦长
+    theta = (l)/(r)*(1/6-(l**2)/(2835*r**2)-(l**4)/(467775*r**4))  #-(23*l**6)/(1915538625*r**6))  # 弦切角
+    beta = (l)/(2*r)  # 切线角
+    theta0 = yaw + (beta-theta)
+    x_final = x + c * cos(theta0)
+    y_final = y + c * sin(theta0)
+    yaw_final = pi_2_pi(yaw + beta)
+    
+    ls, l = len_s, len_s - distance
+    c = l*(1-(l**4)/(90*r**2*ls**2)+(l**8)/(22680*r**4*ls**4))  #-(79*l**12)/(2043241200*r**6*ls**6))  # 弦长
+    theta = (l**2)/(r*ls)*(1/6-(l**4)/(2835*r**2*ls**2)-(l**8)/(467775*r**4*ls**4))  #-(23*l**12)/(1915538625*r**6*ls**6))  # 弦切角
+    beta = (l**2)/(2*r*ls)  # 切线角
+    theta0 = yaw_final + pi - theta
+    x = x_final + c * cos(theta0)
+    y = y_final + c * sin(theta0)
+    yaw = yaw_final - beta
+
+    return x, y, yaw
+
+
+def r_move(x, y, yaw, distance, r, L=WB):
+    theta = pi_2_pi(distance / r)
+    tmp_x = r * sin(theta)
+    tmp_y = r - r*cos(theta)
+    new_r = sqrt(tmp_x**2 + tmp_y**2)
+    theta0 = yaw + atan(tmp_y/tmp_x)
+    x += new_r * cos(theta0)
+    y += new_r * sin(theta0)
+    yaw += theta
 
     return x, y, yaw
 
