@@ -23,6 +23,7 @@ class Path:
         self.y = []
         self.yaw = []
         self.directions = []
+        self.cur_type = []  # -1表示缓和曲线，0代表直线，1代表圆弧
         self.curvature = None
 
 
@@ -335,16 +336,16 @@ def calc_paths(sx, sy, syaw, gx, gy, gyaw, maxc, step_size):
 
     paths = generate_path(q0, q1, maxc)
     for path in paths:
-        x, y, yaw, directions = generate_local_course(
-            path.L, path.lengths, path.ctypes, maxc, step_size * maxc)
+        # x, y, yaw, directions = generate_local_course(
+        #     path.L, path.lengths, path.ctypes, maxc, step_size * maxc)
 
-        # convert global coordinate
-        path.x = [math.cos(-q0[2]) * ix + math.sin(-q0[2])
-                  * iy + q0[0] for (ix, iy) in zip(x, y)]
-        path.y = [-math.sin(-q0[2]) * ix + math.cos(-q0[2])
-                  * iy + q0[1] for (ix, iy) in zip(x, y)]
-        path.yaw = [pi_2_pi(iyaw + q0[2]) for iyaw in yaw]
-        path.directions = directions
+        # # convert global coordinate
+        # path.x = [math.cos(-q0[2]) * ix + math.sin(-q0[2])
+        #           * iy + q0[0] for (ix, iy) in zip(x, y)]
+        # path.y = [-math.sin(-q0[2]) * ix + math.cos(-q0[2])
+        #           * iy + q0[1] for (ix, iy) in zip(x, y)]
+        # path.yaw = [pi_2_pi(iyaw + q0[2]) for iyaw in yaw]
+        # path.directions = directions
         path.lengths = [l / maxc for l in path.lengths]
         path.L = path.L / maxc
         path.curvature = maxc
