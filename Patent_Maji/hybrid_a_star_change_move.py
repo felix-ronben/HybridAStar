@@ -6,6 +6,7 @@ author: Zheng Zh (@Zhengzh)
 
 """
 
+from cProfile import label
 import heapq
 import scipy.spatial
 import numpy as np
@@ -16,7 +17,7 @@ import xlrd
 try:
     from a_star_change_move import dp_planning  # , calc_obstacle_map
     import reeds_shepp_path_planning as rs
-    from car_change_move import move, check_car_collision, MAX_STEER, WB, plot_car, new_move, spr_move1, spr_move2, r_move
+    from car_change_move import check_car_collision, new_move, spr_move1, spr_move2, r_move
 except:
     raise
 
@@ -28,32 +29,29 @@ N_STEER = 20  # number of steer command
 H_COST = 1.0
 VR = 1.0  # robot radius
 
-SB_COST = 10000.0  # switch back penalty cost
-BACK_COST = 5.0  # backward penalty cost
-STEER_CHANGE_COST = 5.0  # steer angle change penalty cost
-STEER_COST = 1.0  # steer angle change penalty cost
+STEER_COST = 1  # steer angle change penalty cost
 H_COST = 1  # Heuristic cost
-
-LEN_SPIRAL = 1
+LEN_SPIRAL = 2  # 缓和曲线长度
 
 MIN_SEG = 5  # 最小曲线长度的线元段数
+MIN_R = 5  # 最小曲线半径
+MAX_ANGLE_CHANGE = 1.5/MIN_R  # 行进1.5单位的转角为最大转角
+ANGLES = list(np.linspace(-MAX_ANGLE_CHANGE, MAX_ANGLE_CHANGE, N_STEER)) + [0.0]
+RADIUS = list(1.5/np.linspace(-MAX_ANGLE_CHANGE, MAX_ANGLE_CHANGE, N_STEER)) + [None]
 show_animation = True
-
 
 class Node:
 
-    def __init__(self, xind, yind, yawind, direction,
-                 xlist, ylist, yawlist, directions,
-                 steer=0.0, pind=None, cost=None, catogory=None):
+    def __init__(self, xind, yind, yawind,
+                 xlist, ylist, yawlist,
+                 radius=None, pind=None, cost=None, catogory=None):
         self.xind = xind
         self.yind = yind
         self.yawind = yawind
-        self.direction = direction
         self.xlist = xlist
         self.ylist = ylist
         self.yawlist = yawlist
-        self.directions = directions
-        self.steer = steer
+        self.radius = radius
         self.pind = pind
         self.cost = cost
         self.catogory = catogory  # -1表示缓和曲线；0表示直线； 1表示曲线
@@ -61,13 +59,12 @@ class Node:
 
 class Path:
 
-    def __init__(self, xlist, ylist, yawlist, directionlist, cost, steer=None):
+    def __init__(self, xlist, ylist, yawlist, cost, radius=None):
         self.xlist = xlist
         self.ylist = ylist
         self.yawlist = yawlist
-        self.directionlist = directionlist
         self.cost = cost
-        self.steer = steer
+        self.radius = radius
 
 
 class KDTree:
@@ -134,52 +131,50 @@ class Config:
         self.yaww = round(self.maxyaw - self.minyaw)
 
 
-def calc_motion_inputs():
-
-    for steer in np.concatenate((np.linspace(-MAX_STEER, MAX_STEER, N_STEER), [0.0])):
-        yield [steer, 1]
-
 
 def get_neighbors(current, config, ox, oy, kdtree, closelist):
 
-    for steer, d in calc_motion_inputs():
-        node = calc_next_node(current, steer, d, config,
-                              ox, oy, kdtree, closelist)
+    for radius in RADIUS:
+        node = calc_next_node(current, radius, config, ox, oy, kdtree, closelist)
         if node and verify_index(node, config):
             yield node
 
 
-def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist):
+def calc_next_node(current, radius, config, ox, oy, kdtree, closelist):
 
     min_seg = MIN_SEG
     count, tmp = 0, current  # count 用来判断当前曲线是否满足约束，能否开始RS拟合
 
-    while (tmp.pind != None and tmp.steer != 0):
+    while (tmp.pind is not None and tmp.radius is not None):
         tst = closelist[tmp.pind]
         count += 1
-        if tmp.steer != tst.steer:
+        if tmp.radius != tst.radius:
             break
         tmp = tst  # 检测相同曲率的圆曲线段数
-    if (count > 0 and count < min_seg) and steer != current.steer:
+    if (count > 0 and count < min_seg) and radius != current.radius:
         return None  # 不足曲线长度约束按原半径继续探索
 
-    if count >= min_seg and steer*current.steer != 0:
+    if count > 0 and radius == current.radius:
+        max_seg = 3.14*abs(radius/1.5)-1
+        if count > max_seg:
+            return None  # 防止回头曲线
+
+    if (count >= min_seg) and (not (radius == current.radius or radius is None)):
         return None  # 曲线间必须由缓和曲线或直线连接
 
-    if current.catogory is not None and current.steer == 0:
-        if closelist[current.pind].steer*steer > 0:
+    if current.catogory is not None and current.radius is None:
+        if (closelist[current.pind].radius is not None and radius is not None) and (closelist[current.pind].radius*radius > 0):
             return None  # 不允许C形曲线
 
-    if steer == 0 and current.steer == 0:  # 判断当前节点的类型，-2为缓和曲线（圆到直）
+    if radius is None and current.radius is None:  # 判断当前节点的类型，-2为缓和曲线（圆到直）
         cato = 0  # ,-1为缓和曲线（直到圆），0为直线，1为曲线
-    elif (steer != 0 and current.steer == 0):
+    elif (radius is not None and current.radius is None):
         cato = -1
-    elif (steer == 0 and current.steer != 0):
+    elif (radius is None and current.radius is not None):
         cato = -2
-    elif steer != 0 and current.steer != 0:
-        cato = 1
     else:
-        cato = None
+        cato = 1
+
 
     x, y, yaw = current.xlist[-1], current.ylist[-1], current.yawlist[-1]
     x_old, y_old, yaw_old = x, y, yaw
@@ -189,13 +184,13 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist)
     for dist in np.arange(0, arc_l, MOTION_RESOLUTION):
         if cato == -1:
             x, y, yaw = spr_move1(x_old, y_old, yaw_old,
-                                  dist+MOTION_RESOLUTION, steer, LEN_SPIRAL)
+                                  dist+MOTION_RESOLUTION, LEN_SPIRAL, radius)
         elif cato == -2:
             x, y, yaw = spr_move2(
-                x_old, y_old, yaw_old, dist+MOTION_RESOLUTION, current.steer, LEN_SPIRAL)
+                x_old, y_old, yaw_old, dist+MOTION_RESOLUTION, LEN_SPIRAL, current.radius)
         else:
             x, y, yaw = new_move(
-                x, y, yaw, MOTION_RESOLUTION * direction, steer)
+                x, y, yaw, MOTION_RESOLUTION, radius)
         xlist.append(x)
         ylist.append(y)
         yawlist.append(yaw)
@@ -203,29 +198,26 @@ def calc_next_node(current, steer, direction, config, ox, oy, kdtree, closelist)
     if not check_car_collision(xlist, ylist, yawlist, ox, oy, kdtree):
         return None
 
-    d = direction == 1
     xind = round(x / XY_GRID_RESOLUTION)
     yind = round(y / XY_GRID_RESOLUTION)
     yawind = round(yaw / YAW_GRID_RESOLUTION)
 
     addedcost = 0.0
 
-    if d != current.direction:
-        addedcost += SB_COST
-
     # steer penalty
-    addedcost += STEER_COST * abs(steer)
+    if radius is not None:
+        addedcost += STEER_COST * abs(MIN_R/radius)
 
     # steer change penalty
     # + int((abs(current.steer - steer)/(2*MAX_STEER/(N_STEER-1))))**10
-    addedcost += STEER_CHANGE_COST * abs(current.steer - steer)
+    # addedcost += STEER_CHANGE_COST * abs(current.angle_change - angle_change)
 
     cost = current.cost + addedcost + arc_l
 
-    node = Node(xind, yind, yawind, d, xlist,
-                ylist, yawlist, [d],
+    node = Node(xind, yind, yawind, xlist,
+                ylist, yawlist,
                 pind=calc_index(current, config),
-                cost=cost, steer=steer, catogory=cato)
+                cost=cost, radius=radius, catogory=cato)
 
     return node
 
@@ -247,10 +239,10 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
     gyaw = goal.yawlist[-1]
 
     n_curvature, paths_collect = round(N_STEER/2), []
-    for i in range(1, n_curvature+1):  # 所有曲率均计算R-S曲线
-        max_curvature = math.tan(MAX_STEER*(i/n_curvature)) / WB
+    for r in RADIUS[n_curvature:-1]:  # 所有曲率均计算R-S曲线
+        curvature = 1/r
         paths = rs.calc_paths(sx, sy, syaw, gx, gy, gyaw,
-                              max_curvature, step_size=MOTION_RESOLUTION)
+                              curvature, step_size=MOTION_RESOLUTION)
         paths_collect = paths_collect + paths
 
     paths_selected = []
@@ -302,11 +294,11 @@ def get_x_y_yaw_of_new_rs_part(sx, sy, syaw, len_item, type_item, r):
         cx, cy, cyaw = [], [], []
         rr = get_r(syaw, m1_yaw, r)
         while dis <= LEN_SPIRAL:
-            x, y, yaw = spr_move1(sx, sy, syaw, dis, 0,
-                                  LEN_SPIRAL, L=WB, radi=sign_of_r*rr)
+            x, y, yaw = spr_move1(sx, sy, syaw, dis,
+                                  LEN_SPIRAL, radi=sign_of_r*rr)
             sp1x.append(x), sp1y.append(y), sp1yaw.append(yaw)
             x0, y0, yaw0 = spr_move1(
-                m1_x, m1_y, m1_yaw+np.pi, dis, 0, LEN_SPIRAL, L=WB, radi=-sign_of_r*rr)
+                m1_x, m1_y, m1_yaw+np.pi, dis, LEN_SPIRAL, radi=-sign_of_r*rr)
             sp2x.insert(0, x0), sp2y.insert(0, y0), sp2yaw.insert(0, yaw0)
             dis += MOTION_RESOLUTION
         while abs(x0-x)+abs(y0-y) >= 0.1:
@@ -319,12 +311,12 @@ def get_x_y_yaw_of_new_rs_part(sx, sy, syaw, len_item, type_item, r):
         yaw_out = sp1yaw + cyaw + sp2yaw
         type_out = [-1 for i in range(len(sp1x))] + [1 for i in range(len(cx))] + [-1 for i in range(len(sp2x))]
     else:
-        m1_x, m1_y, m1_yaw = new_move(sx, sy, syaw, len_item, 0)
+        m1_x, m1_y, m1_yaw = new_move(sx, sy, syaw, len_item)
         dis = MOTION_RESOLUTION
         x_out, y_out, yaw_out = [], [], []
         x, y, yaw = sx, sy, syaw
         while dis <= len_item:
-            x, y, yaw = new_move(x, y, yaw, MOTION_RESOLUTION, 0)
+            x, y, yaw = new_move(x, y, yaw, MOTION_RESOLUTION)
             # plt.plot(x,y,'xr')
             x_out.append(x), y_out.append(y), yaw_out.append(yaw)
             dis += MOTION_RESOLUTION
@@ -395,23 +387,18 @@ def update_node_with_analystic_expantion(current, goal,
 
         for i in range(len(apath.cur_type)):
             if apath.cur_type[i] == -1:
-                plt.plot(apath.x[i],apath.y[i],'xy')
+                plt.plot(apath.x[i],apath.y[i],'.b')
             elif apath.cur_type[i] == 0:
-                plt.plot(apath.x[i],apath.y[i],'xr')
+                plt.plot(apath.x[i],apath.y[i],'.r')
             else:
-                plt.plot(apath.x[i],apath.y[i],'xg')
+                plt.plot(apath.x[i],apath.y[i],'.g')
 
         fcost = current.cost + calc_rs_path_cost(apath)
         fpind = calc_index(current, c)
-
-        fd = []
-        for d in apath.directions[1:]:
-            fd.append(d >= 0)
-
-        fsteer = 0.0
+        
         fpath = Node(current.xind, current.yind, current.yawind,
-                     current.direction, fx, fy, fyaw, fd,
-                     cost=fcost, pind=fpind, steer=fsteer)
+                     fx, fy, fyaw,
+                     cost=fcost, pind=fpind, radius=None)
         return True, fpath
 
     return False, None
@@ -421,33 +408,12 @@ def calc_rs_path_cost(rspath):
 
     cost = 0.0
     for l in rspath.lengths:
-        if l >= 0:  # forward
-            cost += l
-        else:  # back
-            cost += abs(l) * BACK_COST
-
-    # swich back penalty
-    for i in range(len(rspath.lengths) - 1):
-        if rspath.lengths[i] * rspath.lengths[i + 1] < 0.0:  # switch back
-            cost += SB_COST
+        cost += l
 
     # steer penalyty
     for ctype in rspath.ctypes:
         if ctype != "S":  # curve
-            cost += STEER_COST * abs(MAX_STEER)
-
-    # ==steer change penalty
-    # calc steer profile
-    nctypes = len(rspath.ctypes)
-    ulist = [0.0] * nctypes
-    for i in range(nctypes):
-        if rspath.ctypes[i] == "R":
-            ulist[i] = - MAX_STEER
-        elif rspath.ctypes[i] == "L":
-            ulist[i] = MAX_STEER
-
-    for i in range(len(rspath.ctypes) - 1):
-        cost += STEER_CHANGE_COST * abs(ulist[i + 1] - ulist[i])
+            cost += STEER_COST * abs(rspath.curvature*MIN_R)
 
     return cost
 
@@ -455,13 +421,13 @@ def calc_rs_path_cost(rspath):
 def check_rs_permition(current, closedList, ngoal):
     min_seg = MIN_SEG
     count, tmp = 0, current  # count 用来判断当前曲线是否满足约束，能否开始RS拟合
-    while (tmp.pind != None and tmp.steer != 0):
+    while (tmp.pind is not None and tmp.radius is not None):
         tst = closedList[tmp.pind]
         count += 1
-        if tmp.steer != tst.steer:
+        if tmp.radius != tst.radius:
             break
         tmp = tst  # 检测相同曲率的圆曲线段数
-    if current.steer != 0:
+    if current.radius is not None:
         return False  # RS只能接直线，连缓和曲线都不能接
     if count > 0 and count < min_seg:
         return False
@@ -486,9 +452,9 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
     config = Config(tox, toy, xyreso, yawreso)
 
     nstart = Node(round(start[0] / xyreso), round(start[1] / xyreso), round(start[2] / yawreso),
-                  True, [start[0]], [start[1]], [start[2]], [True], cost=0)
+                  [start[0]], [start[1]], [start[2]], cost=0)
     ngoal = Node(round(goal[0] / xyreso), round(goal[1] / xyreso), round(goal[2] / yawreso),
-                 True, [goal[0]], [goal[1]], [goal[2]], [True])
+                 [goal[0]], [goal[1]], [goal[2]])
 
     openList, closedList = {}, {}
 
@@ -553,7 +519,6 @@ def calc_cost(n, h_dp, goal, c):
 def get_final_path(closed, ngoal, nstart, config):
     rx, ry, ryaw = list(reversed(ngoal.xlist)), list(
         reversed(ngoal.ylist)), list(reversed(ngoal.yawlist))
-    direction = list(reversed(ngoal.directions))
     nid = ngoal.pind
     finalcost = ngoal.cost
 
@@ -562,8 +527,7 @@ def get_final_path(closed, ngoal, nstart, config):
         rx.extend(list(reversed(n.xlist)))
         ry.extend(list(reversed(n.ylist)))
         ryaw.extend(list(reversed(n.yawlist)))
-        direction.extend(list(reversed(n.directions)))
-
+        
         if n.catogory == 0:
             plt.plot(n.xlist, n.ylist, ".r")
         elif n.catogory == 1:
@@ -572,16 +536,16 @@ def get_final_path(closed, ngoal, nstart, config):
             plt.plot(n.xlist, n.ylist, ".b")
 
         nid = n.pind
-
+    plt.rcParams['font.family'] = 'FangSong'
+    plt.plot(ngoal.xlist[0], ngoal.ylist[0], ".r", label=' 直线段 ')
+    plt.plot(ngoal.xlist[0], ngoal.ylist[0], ".g", label=' 圆曲线 ')
+    plt.plot(ngoal.xlist[0], ngoal.ylist[0], ".b", label='缓和曲线')
+    plt.legend(loc='best',fontsize=12)
     rx = list(reversed(rx))
     ry = list(reversed(ry))
     ryaw = list(reversed(ryaw))
-    direction = list(reversed(direction))
 
-    # adjust first direction
-    direction[0] = direction[1]
-
-    path = Path(rx, ry, ryaw, direction, finalcost)
+    path = Path(rx, ry, ryaw, finalcost)
 
     return path
 
@@ -605,6 +569,39 @@ def calc_index(node, c):
     return ind
 
 
+def UI_call(sx, sy, syaw, gx, gy, gyaw, min_r,  min_curv, len_spiral,
+            angle_res, direction_size, path_res, h_para, turn_pena, filename):
+    print("Start Hybrid A* planning from UI")
+    global YAW_GRID_RESOLUTION, MOTION_RESOLUTION, N_STEER
+    global LEN_SPIRAL, MIN_SEG, H_COST, STEER_COST, MIN_R
+    YAW_GRID_RESOLUTION, MOTION_RESOLUTION, N_STEER = np.deg2rad(angle_res), path_res, direction_size
+    H_COST, STEER_COST, LEN_SPIRAL, MIN_R, MIN_SEG = h_para, turn_pena, len_spiral, min_r, (min_curv/1.5)+1
+    
+    ox, oy = [], []
+    data_filename = filename
+    work_Book = xlrd.open_workbook(data_filename)
+    sheet = work_Book.sheet_by_name('Sheet1')
+    for i in range(0, sheet.nrows):
+        cells = sheet.row_values(i)
+        ox.append(int(cells[0]))
+        oy.append(int(cells[1]))
+    start = [sx, sy, np.deg2rad(syaw)]
+    goal = [gx, gy, np.deg2rad(gyaw)]
+    rs.plot_arrow(start[0], start[1], start[2], fc='g')
+    rs.plot_arrow(goal[0], goal[1], goal[2])
+    plt.plot(ox, oy, ".k")
+    plt.grid(True)
+    plt.axis("equal")
+    path = hybrid_a_star_planning(
+        start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
+    plt.show()
+    para_test()
+    pass
+
+
+def para_test():
+    print(H_COST)
+
 def main():
     print("Start Hybrid A* planning")
 
@@ -620,13 +617,13 @@ def main():
         oy.append(int(cells[1]))
 
     # Set Initial parameters
-    # start = [53.21, 74.08, np.deg2rad(180.0)]
+    start = [53.21, 74.08, np.deg2rad(180.0)]
     # goal = [88.26, 130.29, np.deg2rad(180.0)]
     # start = [88.26, 130.29, np.deg2rad(0.0)]
     # goal = [53.21, 74.08, np.deg2rad(0.0)]
     # goal = [119.26, 40.29, np.deg2rad(90.0)]
-    start = [40.0, 20.0, np.deg2rad(90.0)]
-    goal = [20.0, 40.0, np.deg2rad(180.0)]
+    # start = [40.0, 20.0, np.deg2rad(90.0)]
+    goal = [20.0, 20.0, np.deg2rad(225.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -650,9 +647,9 @@ def main():
     #     plt.axis("equal")
     #     plot_car(ix, iy, iyaw)
     #     plt.pause(0.0001)
-    plt.plot(ox, oy, ".k")
-    plt.grid(True)
-    plt.axis("equal")
+    # plt.plot(ox, oy, ".k")
+    # plt.grid(True)
+    # plt.axis("equal")
     plt.show()
 
     print(__file__ + " done!!")

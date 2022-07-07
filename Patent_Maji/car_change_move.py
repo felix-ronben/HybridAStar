@@ -97,9 +97,9 @@ def move(x, y, yaw, distance, steer, L=WB):
     return x, y, yaw
 
 
-def new_move(x, y, yaw, distance, steer, L=WB):
-    if steer != 0:
-        r = L / tan(steer)
+def new_move(x, y, yaw, distance, radi=None):
+    if radi is not None:
+        r = radi
         theta = pi_2_pi(distance / r)
         tmp_x = r * sin(theta)
         tmp_y = r - r*cos(theta)
@@ -115,9 +115,9 @@ def new_move(x, y, yaw, distance, steer, L=WB):
     return x, y, yaw
 
     
-def spr_move1(x, y, yaw, distance, steer, len_s, L=WB, radi=None):
+def spr_move1(x, y, yaw, distance, len_s, radi=None):
     ls, l = len_s, distance
-    r = L / tan(steer) if radi is None else radi
+    r = radi
     c = l*(1-(l**4)/(90*r**2*ls**2)+(l**8)/(22680*r**4*ls**4))  #-(79*l**12)/(2043241200*r**6*ls**6))  # 弦长
     theta = (l**2)/(r*ls)*(1/6-(l**4)/(2835*r**2*ls**2)-(l**8)/(467775*r**4*ls**4))  #-(23*l**12)/(1915538625*r**6*ls**6))  # 弦切角
     beta = (l**2)/(2*r*ls)  # 切线角
@@ -129,9 +129,9 @@ def spr_move1(x, y, yaw, distance, steer, len_s, L=WB, radi=None):
     return x, y, yaw
 
 
-def spr_move2(x, y, yaw, distance, steer, len_s, L=WB):
+def spr_move2(x, y, yaw, distance, len_s, radi=None):
     ls, l = len_s, len_s
-    r = L / tan(steer)
+    r = radi
     c = l*(1-(l**2)/(90*r**2)+(l**4)/(22680*r**4))  #-(79*l**6)/(2043241200*r**6))  # 弦长
     theta = (l)/(r)*(1/6-(l**2)/(2835*r**2)-(l**4)/(467775*r**4))  #-(23*l**6)/(1915538625*r**6))  # 弦切角
     beta = (l)/(2*r)  # 切线角
@@ -152,7 +152,7 @@ def spr_move2(x, y, yaw, distance, steer, len_s, L=WB):
     return x, y, yaw
 
 
-def r_move(x, y, yaw, distance, r, L=WB):
+def r_move(x, y, yaw, distance, r):
     theta = pi_2_pi(distance / r)
     tmp_x = r * sin(theta)
     tmp_y = r - r*cos(theta)
