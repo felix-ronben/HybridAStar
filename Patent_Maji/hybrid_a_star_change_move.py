@@ -7,14 +7,12 @@ author: Zheng Zh (@Zhengzh)
 """
 
 import heapq
-import re
 import scipy.spatial
 import numpy as np
 import math
 import cmath
 import matplotlib.pyplot as plt
-# import sys
-# sys.path.append("./change_move/reeds_shepp_path_planning")
+import xlrd
 try:
     from a_star_change_move import dp_planning  # , calc_obstacle_map
     import reeds_shepp_path_planning as rs
@@ -24,7 +22,7 @@ except:
 
 
 XY_GRID_RESOLUTION = 1.0  # [m]
-YAW_GRID_RESOLUTION = np.deg2rad(10.0)  # [rad]
+YAW_GRID_RESOLUTION = np.deg2rad(0.5)  # [rad]
 MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
 N_STEER = 20  # number of steer command
 H_COST = 1.0
@@ -34,11 +32,11 @@ SB_COST = 10000.0  # switch back penalty cost
 BACK_COST = 5.0  # backward penalty cost
 STEER_CHANGE_COST = 5.0  # steer angle change penalty cost
 STEER_COST = 1.0  # steer angle change penalty cost
-H_COST = 1.3  # Heuristic cost
+H_COST = 1  # Heuristic cost
 
-LEN_SPIRAL = 2
+LEN_SPIRAL = 1
 
-MIN_SEG = 7  # 最小曲线长度的线元段数
+MIN_SEG = 5  # 最小曲线长度的线元段数
 show_animation = True
 
 
@@ -297,7 +295,7 @@ def get_x_y_yaw_of_new_rs_part(sx, sy, syaw, len_item, type_item, r):
     """ 将原rs曲线的不同类型段重构，将圆曲线转为缓和曲线加圆曲线"""
     if type_item == 'R' or type_item == 'L':
         sign_of_r = 1 if type_item == 'L' else -1  # 左转为正，右转为负
-        dis = MOTION_RESOLUTION
+        dis = 0
         m1_x, m1_y, m1_yaw = r_move(sx, sy, syaw, len_item, sign_of_r*r)
         sp1x, sp1y, sp1yaw = [], [], []
         sp2x, sp2y, sp2yaw = [], [], []
@@ -311,7 +309,7 @@ def get_x_y_yaw_of_new_rs_part(sx, sy, syaw, len_item, type_item, r):
                 m1_x, m1_y, m1_yaw+np.pi, dis, 0, LEN_SPIRAL, L=WB, radi=-sign_of_r*rr)
             sp2x.insert(0, x0), sp2y.insert(0, y0), sp2yaw.insert(0, yaw0)
             dis += MOTION_RESOLUTION
-        while (x0-x)+(y0-y) >= 0.1:
+        while abs(x0-x)+abs(y0-y) >= 0.1:
             x, y, yaw = r_move(x, y, yaw, MOTION_RESOLUTION, sign_of_r*rr)
             cx.append(x), cy.append(y), cyaw.append(yaw)
         len_new_item = rr*abs(m1_yaw-syaw-LEN_SPIRAL/rr)+2*LEN_SPIRAL
@@ -515,14 +513,15 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
             continue
 
         if show_animation:  # pragma: no cover
-            plt.plot(current.xlist[-1], current.ylist[-1], "xc")
-            if len(closedList.keys()) % 2 == 0:
+            # plt.plot(current.xlist[-1], current.ylist[-1], "xc")
+            if len(closedList.keys()) % 4000 == 0:
+                plt.plot(current.xlist[-1], current.ylist[-1], "xc")
                 plt.pause(0.001)
 
         isupdated = None
         # abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
         if check_rs_permition(current, closedList, ngoal) and \
-                abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 70:
+                abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 40:
             isupdated, fpath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
@@ -597,7 +596,7 @@ def verify_index(node, c):
 
 
 def calc_index(node, c):
-    ind = (node.yawind - c.minyaw) * c.xw * c.yw + \
+    ind = abs(node.yawind) * c.xw * c.yw + \
         (node.yind - c.miny) * c.xw + (node.xind - c.minx)
 
     if ind <= 0:
@@ -611,28 +610,23 @@ def main():
 
     ox, oy = [], []
 
-    for i in range(160):
-        ox.append(i)
-        oy.append(0.0)
-    for i in range(60):
-        ox.append(160.0)
-        oy.append(i)
-    for i in range(161):
-        ox.append(i)
-        oy.append(60.0)
-    for i in range(61):
-        ox.append(0.0)
-        oy.append(i)
-    for i in range(40):
-        ox.append(50.0)
-        oy.append(i)
-    for i in range(40):
-        ox.append(120.0)
-        oy.append(60.0 - i)
+    data_filename = 'maji.xls'
+    work_Book = xlrd.open_workbook(data_filename)
+    sheet = work_Book.sheet_by_name('Sheet1')
+    for i in range(0, sheet.nrows):
+        cells = sheet.row_values(i)
+        # 保留两位小数
+        ox.append(int(cells[0]))
+        oy.append(int(cells[1]))
 
     # Set Initial parameters
-    start = [10.0, 15.0, np.deg2rad(45.0)]
-    goal = [150.0, 50.0, np.deg2rad(45.0)]
+    # start = [53.21, 74.08, np.deg2rad(180.0)]
+    # goal = [88.26, 130.29, np.deg2rad(180.0)]
+    # start = [88.26, 130.29, np.deg2rad(0.0)]
+    # goal = [53.21, 74.08, np.deg2rad(0.0)]
+    # goal = [119.26, 40.29, np.deg2rad(90.0)]
+    start = [40.0, 20.0, np.deg2rad(90.0)]
+    goal = [20.0, 40.0, np.deg2rad(180.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -644,9 +638,9 @@ def main():
     path = hybrid_a_star_planning(
         start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
 
-    x = path.xlist
-    y = path.ylist
-    yaw = path.yawlist
+    # x = path.xlist
+    # y = path.ylist
+    # yaw = path.yawlist
 
     # for ix, iy, iyaw in zip(x, y, yaw):
     #     # plt.cla()
