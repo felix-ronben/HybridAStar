@@ -1,19 +1,17 @@
+from fileinput import filename
+import imp
 import tkinter as tk
 from tkinter import filedialog
+from hybrid_a_star_change_move import UI_call
 
 window = tk.Tk()
 window.title(u'公路平面线形自动化设计程序')
-window.geometry('350x600+700+300')
+window.geometry('350x650+700+300')
 window.wm_attributes('-topmost', 1)
 window.resizable(0, 0)
 
-var = tk.StringVar()
-var2 = tk.StringVar()
 
 select_path = tk.StringVar()
-
-var.set(u'尚未建立连接...')
-var2.set(u'')
 min_r = tk.StringVar()
 min_r.set('50')
 mesh_size = tk.StringVar()
@@ -31,16 +29,19 @@ re_path.set('0.1')
 para = tk.StringVar()
 para.set('1')
 turn_p = tk.StringVar()
-turn_p.set('5')
+turn_p.set('1')
 sx = tk.StringVar()
-sx.set('x/m')
+sx.set('532.1')#('x/m')
 sy = tk.StringVar()
-sy.set('y/m')
+sy.set('740.8')#('y/m')
 syaw = tk.StringVar()
-syaw.set('角度')
+syaw.set('180')#('角度')
 gx = tk.StringVar()
+gx.set('1192.6')#('x/m')
 gy = tk.StringVar()
+gy.set('402.9')#('y/m')
 gyaw = tk.StringVar()
+gyaw.set('90')#('角度')
 
 
 def select_file():
@@ -50,8 +51,21 @@ def select_file():
     t.insert('end', '优化边界文件路径为：'+selected_file_path)
 
 
-def start_process(min_r=int(min_r.get())):
-    print(min_r)
+def start_process():
+    min_r, mesh_size, min_curv = int(e1.get()),int(e2.get()),int(e4.get())
+    len_spiral, angle_res, direction_size = int(e5.get()), float(e6.get()), int(e7.get())
+    path_res, h_para, turn_pena = float(e8.get()), float(e9.get()), float(e10.get())
+    sx, sy, syaw, gx, gy, gyaw = e11.get(), e12.get(), e13.get(), e14.get(), e15.get(), e16.get()
+    filename = select_path.get()
+    try:
+        sx, sy, syaw, gx, gy, gyaw = float(sx), float(sy), float(syaw), float(gx), float(gy), float(gyaw)
+    except:
+        return
+    (min_r, min_curv, len_spiral, sx, sy, gx, gy) = (min_r/mesh_size, min_curv/mesh_size, len_spiral/mesh_size,
+                                                    sx/mesh_size, sy/mesh_size, gx/mesh_size, gy/mesh_size)
+    UI_call(sx, sy, syaw, gx, gy, gyaw, min_r, min_curv, len_spiral,
+            angle_res, direction_size, path_res, h_para, turn_pena, filename)
+    pass
 
 
 logo = tk.PhotoImage(file="2.gif")
@@ -62,6 +76,7 @@ b = tk.Button(window, bg='#DCDCDC', text=u'选择文件', font=('kaiti', 15),
               width=10, height=1, command=select_file).place(x=110, y=155, anchor='nw')
 
 t = tk.Text(window, height=3, font=('kaiti', 15), width=30)
+t.insert('end', "尚未选择文件......")
 t.place(x=23, y=195, anchor='nw')
 
 l2 = tk.Label(window, text=u'最小曲线半径/m：', font=('kaiti', 15), foreground='red',
@@ -119,15 +134,15 @@ e13 = tk.Entry(window, textvariable=syaw, width=6, font=('kaiti', 15))
 e13.place(x=260, y=535, anchor='nw')
 
 l12 = tk.Label(window, text=u'终点：', font=('kaiti', 15),
-              width=30, height=1).place(x=-60, y=535, anchor='nw')
-e14 = tk.Entry(window, textvariable=x, width=6, font=('kaiti', 15))
-e14.place(x=120, y=535, anchor='nw')
+              width=30, height=1).place(x=-60, y=565, anchor='nw')
+e14 = tk.Entry(window, textvariable=gx, width=6, font=('kaiti', 15))
+e14.place(x=120, y=565, anchor='nw')
 e15 = tk.Entry(window, textvariable=gy, width=6, font=('kaiti', 15))
-e15.place(x=190, y=535, anchor='nw')
+e15.place(x=190, y=565, anchor='nw')
 e16 = tk.Entry(window, textvariable=gyaw, width=6, font=('kaiti', 15))
-e16.place(x=260, y=535, anchor='nw')
+e16.place(x=260, y=565, anchor='nw')
 
-# b1 = tk.Button(window, bg='#DCDCDC', text=u'生成线路', font=('kaiti', 15),
-#                width=10, height=1, command=start_process).place(x=110, y=545, anchor='nw')
+b1 = tk.Button(window, bg='#DCDCDC', text=u'生成线路', font=('kaiti', 15),
+               width=10, height=1, command=start_process).place(x=110, y=600, anchor='nw')
 
 window.mainloop()

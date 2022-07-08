@@ -266,15 +266,16 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
         # TODO：程序需要模块化，并且检验其正确性
         x, y, yaw = sx, sy, syaw
         r = 1/path.curvature
-        path.x, path.y, path.yaw, path.cur_type = [], [], [], []
+        path.x, path.y, path.yaw, path.cur_type, path.rr = [], [], [], [], None
         for i in range(3):
-            x, y, yaw, x_out, y_out, yaw_out, len_new_item, type_out = get_x_y_yaw_of_new_rs_part(
+            x, y, yaw, x_out, y_out, yaw_out, len_new_item, type_out, rr = get_x_y_yaw_of_new_rs_part(
                 x, y, yaw, path.lengths[i], path.ctypes[i], r)
             path.x += x_out
             path.y += y_out
             path.yaw += yaw_out
             path.cur_type += type_out
             path.lengths[i] = len_new_item
+            path.rr = rr if path.rr is None else path.rr
         if check_car_collision(path.x, path.y, path.yaw, ox, oy, kdtree):
             cost = calc_rs_path_cost(path)
             if not best or best > cost:
@@ -285,6 +286,7 @@ def analytic_expantion(current, goal, c, ox, oy, kdtree):
 
 def get_x_y_yaw_of_new_rs_part(sx, sy, syaw, len_item, type_item, r):
     """ 将原rs曲线的不同类型段重构，将圆曲线转为缓和曲线加圆曲线"""
+    rr = None
     if type_item == 'R' or type_item == 'L':
         sign_of_r = 1 if type_item == 'L' else -1  # 左转为正，右转为负
         dis = 0
@@ -322,7 +324,7 @@ def get_x_y_yaw_of_new_rs_part(sx, sy, syaw, len_item, type_item, r):
             dis += MOTION_RESOLUTION
         len_new_item = len_item
         type_out = [0 for i in range(len(x_out))]
-    return m1_x, m1_y, m1_yaw, x_out, y_out, yaw_out, len_new_item, type_out
+    return m1_x, m1_y, m1_yaw, x_out, y_out, yaw_out, len_new_item, type_out, rr
 
 
 def get_r(syaw, gyaw, r):  # RS曲线的圆弧段修正为缓和曲线+圆弧，此函数用于求新的曲线半径,缓和曲线长度已知
@@ -398,7 +400,7 @@ def update_node_with_analystic_expantion(current, goal,
         
         fpath = Node(current.xind, current.yind, current.yawind,
                      fx, fy, fyaw,
-                     cost=fcost, pind=fpind, radius=None)
+                     cost=fcost, pind=fpind, radius=apath.rr)
         return True, fpath
 
     return False, None
@@ -505,7 +507,7 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
                          neighbor_index))
                 openList[neighbor_index] = neighbor
 
-    path = get_final_path(closedList, fpath, nstart, config)
+    path = get_final_path(closedList, fpath, nstart, ngoal)
     return path
 
 
@@ -516,12 +518,21 @@ def calc_cost(n, h_dp, goal, c):
     return n.cost + H_COST * h_dp[ind].cost
 
 
-def get_final_path(closed, ngoal, nstart, config):
+def get_final_path(closed, ngoal, nstart, ngoal_true):
+    bpdx, bpdy, bpdyaw, radiuss = [], [], [], []  # 记录变坡点坐标和对应的曲线半径
+    bpdx.append(ngoal_true.xlist[-1])
+    bpdy.append(ngoal_true.ylist[-1])
+    bpdyaw.append(ngoal_true.yawlist[-1])
+    bpdx.append(ngoal.xlist[0])
+    bpdy.append(ngoal.ylist[0])
+    bpdyaw.append(ngoal.yawlist[0])
+    radiuss.append(ngoal.radius)
+
     rx, ry, ryaw = list(reversed(ngoal.xlist)), list(
         reversed(ngoal.ylist)), list(reversed(ngoal.yawlist))
     nid = ngoal.pind
     finalcost = ngoal.cost
-
+    
     while nid:
         n = closed[nid]
         rx.extend(list(reversed(n.xlist)))
@@ -536,18 +547,47 @@ def get_final_path(closed, ngoal, nstart, config):
             plt.plot(n.xlist, n.ylist, ".b")
 
         nid = n.pind
+        if n.radius is not None and closed[nid].radius is None:
+            bpdx.append(closed[nid].xlist[-1])
+            bpdy.append(closed[nid].ylist[-1])
+            bpdyaw.append(closed[nid].yawlist[-1])
+            radiuss.append(n.radius)
+    
+    fbpdx, fbpdy = [ngoal_true.xlist[-1]], [ngoal_true.ylist[-1]]  #  最终的变坡点，由起终点加上边坡点
+    for i in range(len(bpdx)-1):
+        x_tmp, y_tmp = get_intersect_point(bpdx[i],bpdy[i],bpdyaw[i],bpdx[i+1],bpdy[i+1],bpdyaw[i+1])
+        fbpdx.append(x_tmp)
+        fbpdy.append(y_tmp)
+    fbpdx.append(nstart.xlist[0])
+    fbpdy.append(nstart.ylist[0])
+
     plt.rcParams['font.family'] = 'FangSong'
-    plt.plot(ngoal.xlist[0], ngoal.ylist[0], ".r", label=' 直线段 ')
-    plt.plot(ngoal.xlist[0], ngoal.ylist[0], ".g", label=' 圆曲线 ')
-    plt.plot(ngoal.xlist[0], ngoal.ylist[0], ".b", label='缓和曲线')
+    plt.plot(ngoal.xlist[-1], ngoal.ylist[-1], ".r", label=' 直线段 ')
+    plt.plot(ngoal.xlist[-1], ngoal.ylist[-1], ".g", label=' 圆曲线 ')
+    plt.plot(ngoal.xlist[-1], ngoal.ylist[-1], ".b", label='缓和曲线')
+    plt.plot(fbpdx,fbpdy,'--k', label=' 延长线 ')
     plt.legend(loc='best',fontsize=12)
+    
     rx = list(reversed(rx))
     ry = list(reversed(ry))
     ryaw = list(reversed(ryaw))
 
     path = Path(rx, ry, ryaw, finalcost)
-
+    path.fbpdx = fbpdx
+    path.fbpdy = fbpdy
+    path.radiuses = radiuss
     return path
+
+
+def get_intersect_point(x1, y1, yaw1, x2, y2, yaw2):
+    k1, k2 = np.tan(yaw1), np.tan(yaw2)
+    # (y-y1)*k2=k1*k2(x-x1)
+    # (y-y2)*k1=k2*k1(x-x2)
+    x = ((y2-y1)+(k1*x1-k2*x2))/(k1-k2)
+    y = (k1*k2*(x2-x1)+(k2*y1-k1*y2))/(k2-k1)
+    return x, y
+
+
 
 
 def verify_index(node, c):
@@ -595,8 +635,15 @@ def UI_call(sx, sy, syaw, gx, gy, gyaw, min_r,  min_curv, len_spiral,
     path = hybrid_a_star_planning(
         start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
     plt.show()
-    para_test()
-    pass
+
+    xx, yy, rr = path.fbpdx, path.fbpdy, path.radiuses
+    Note=open('output.txt',mode='w')
+    Note.writelines(u'{:>10s},{:>10s},{:>10s}\n'.format('变坡点X','变坡点Y','曲线半径r'))
+    Note.writelines(u'{:>13.2f},{:>13.2f},\n'.format(xx[0],yy[0]))
+    for i in range(1,len(xx)-1):
+        Note.writelines(u'{:>13.2f},{:>13.2f},{:>14.2f}\n'.format(xx[i], yy[i], abs(rr[i-1])))
+    Note.writelines(u'{:>13.2f},{:>13.2f},\n'.format(xx[-1],yy[-1]))
+    Note.close()
 
 
 def para_test():
@@ -607,7 +654,7 @@ def main():
 
     ox, oy = [], []
 
-    data_filename = 'maji.xls'
+    data_filename = 'input.xls'
     work_Book = xlrd.open_workbook(data_filename)
     sheet = work_Book.sheet_by_name('Sheet1')
     for i in range(0, sheet.nrows):
@@ -623,7 +670,7 @@ def main():
     # goal = [53.21, 74.08, np.deg2rad(0.0)]
     # goal = [119.26, 40.29, np.deg2rad(90.0)]
     # start = [40.0, 20.0, np.deg2rad(90.0)]
-    goal = [20.0, 20.0, np.deg2rad(225.0)]
+    goal = [20.0, 20.0, np.deg2rad(-90.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -651,6 +698,15 @@ def main():
     # plt.grid(True)
     # plt.axis("equal")
     plt.show()
+
+    xx, yy, rr = path.fbpdx, path.fbpdy, path.radiuses
+    Note=open('output.txt',mode='w')
+    Note.writelines(u'{:>10s},{:>10s},{:>10s}\n'.format('变坡点X','变坡点Y','曲线半径r'))
+    Note.writelines(u'{:>13.2f},{:>13.2f},\n'.format(xx[0],yy[0]))
+    for i in range(1,len(xx)-1):
+        Note.writelines(u'{:>13.2f},{:>13.2f},{:>14.2f}\n'.format(xx[i], yy[i], abs(rr[i-1])))
+    Note.writelines(u'{:>13.2f},{:>13.2f},\n'.format(xx[-1],yy[-1]))
+    Note.close()
 
     print(__file__ + " done!!")
 
