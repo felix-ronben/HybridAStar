@@ -6,7 +6,6 @@ author: Zheng Zh (@Zhengzh)
 
 """
 
-from cProfile import label
 import heapq
 import scipy.spatial
 import numpy as np
@@ -33,9 +32,10 @@ STEER_COST = 1  # steer angle change penalty cost
 H_COST = 1  # Heuristic cost
 LEN_SPIRAL = 2  # 缓和曲线长度
 
-MIN_SEG = 5  # 最小曲线长度的线元段数
-MIN_R = 5  # 最小曲线半径
-MAX_ANGLE_CHANGE = 1.5/MIN_R  # 行进1.5单位的转角为最大转角
+MIN_LEN_CURV = 9
+MIN_SEG = MIN_LEN_CURV/1.5+1  # 最小曲线长度的线元段数，其减一才为实际的的圆曲线段数
+MIN_R = 5.7  # 最小曲线半径
+MAX_ANGLE_CHANGE = 1.5/MIN_R  # 行进1.5单位的转角为最大转角，主要用来确定角度分辨率
 ANGLES = list(np.linspace(-MAX_ANGLE_CHANGE, MAX_ANGLE_CHANGE, N_STEER)) + [0.0]
 RADIUS = list(1.5/np.linspace(-MAX_ANGLE_CHANGE, MAX_ANGLE_CHANGE, N_STEER)) + [None]
 show_animation = True
@@ -44,7 +44,7 @@ class Node:
 
     def __init__(self, xind, yind, yawind,
                  xlist, ylist, yawlist,
-                 radius=None, pind=None, cost=None, catogory=None):
+                 radius=None, pind=None, cost=None, catogory=None, lens = 0):
         self.xind = xind
         self.yind = yind
         self.yawind = yawind
@@ -55,6 +55,7 @@ class Node:
         self.pind = pind
         self.cost = cost
         self.catogory = catogory  # -1表示缓和曲线；0表示直线； 1表示曲线
+        self.lens = lens  #  每一段探索的长度,方便计算总长度
 
 
 class Path:
@@ -142,7 +143,7 @@ def get_neighbors(current, config, ox, oy, kdtree, closelist):
 
 def calc_next_node(current, radius, config, ox, oy, kdtree, closelist):
 
-    min_seg = MIN_SEG
+    min_seg = MIN_SEG  # 这里lens表示探索长度，除缓和曲线和rs曲线外，为1.5
     count, tmp = 0, current  # count 用来判断当前曲线是否满足约束，能否开始RS拟合
 
     while (tmp.pind is not None and tmp.radius is not None):
@@ -213,11 +214,12 @@ def calc_next_node(current, radius, config, ox, oy, kdtree, closelist):
     # addedcost += STEER_CHANGE_COST * abs(current.angle_change - angle_change)
 
     cost = current.cost + addedcost + arc_l
+    lens_new = current.lens + arc_l
 
     node = Node(xind, yind, yawind, xlist,
                 ylist, yawlist,
                 pind=calc_index(current, config),
-                cost=cost, radius=radius, catogory=cato)
+                cost=cost, radius=radius, catogory=cato, lens=lens_new)
 
     return node
 
@@ -397,10 +399,11 @@ def update_node_with_analystic_expantion(current, goal,
 
         fcost = current.cost + calc_rs_path_cost(apath)
         fpind = calc_index(current, c)
+        lens = sum(apath.lengths)
         
         fpath = Node(current.xind, current.yind, current.yawind,
                      fx, fy, fyaw,
-                     cost=fcost, pind=fpind, radius=apath.rr)
+                     cost=fcost, pind=fpind, radius=apath.rr, lens = lens)
         return True, fpath
 
     return False, None
@@ -482,14 +485,14 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
 
         if show_animation:  # pragma: no cover
             # plt.plot(current.xlist[-1], current.ylist[-1], "xc")
-            if len(closedList.keys()) % 4000 == 0:
+            if len(closedList.keys()) % 10000 == 0:
                 plt.plot(current.xlist[-1], current.ylist[-1], "xc")
                 plt.pause(0.001)
 
         isupdated = None
         # abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
         if check_rs_permition(current, closedList, ngoal) and \
-                abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 40:
+                abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 30:
             isupdated, fpath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
@@ -576,6 +579,8 @@ def get_final_path(closed, ngoal, nstart, ngoal_true):
     path.fbpdx = fbpdx
     path.fbpdy = fbpdy
     path.radiuses = radiuss
+    len_total = ngoal.lens + closed[ngoal.pind].lens
+    print('final lens is {}'.format(len_total))
     return path
 
 
@@ -646,9 +651,6 @@ def UI_call(sx, sy, syaw, gx, gy, gyaw, min_r,  min_curv, len_spiral,
     Note.close()
 
 
-def para_test():
-    print(H_COST)
-
 def main():
     print("Start Hybrid A* planning")
 
@@ -664,13 +666,13 @@ def main():
         oy.append(int(cells[1]))
 
     # Set Initial parameters
-    start = [53.21, 74.08, np.deg2rad(180.0)]
+    # start = [53.21, 74.08, np.deg2rad(180.0)]
     # goal = [88.26, 130.29, np.deg2rad(180.0)]
-    # start = [88.26, 130.29, np.deg2rad(0.0)]
-    # goal = [53.21, 74.08, np.deg2rad(0.0)]
+    start = [88.26, 130.29, np.deg2rad(0.0)]
+    goal = [53.21, 74.08, np.deg2rad(45.0)]
     # goal = [119.26, 40.29, np.deg2rad(90.0)]
     # start = [40.0, 20.0, np.deg2rad(90.0)]
-    goal = [20.0, 20.0, np.deg2rad(-90.0)]
+    # goal = [35.0, 20.0, np.deg2rad(-90.0)]
 
     plt.plot(ox, oy, ".k")
     rs.plot_arrow(start[0], start[1], start[2], fc='g')
@@ -682,21 +684,6 @@ def main():
     path = hybrid_a_star_planning(
         start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
 
-    # x = path.xlist
-    # y = path.ylist
-    # yaw = path.yawlist
-
-    # for ix, iy, iyaw in zip(x, y, yaw):
-    #     # plt.cla()
-    #     plt.plot(ox, oy, ".k")
-    #     plt.plot(x, y, ".r", label="Hybrid A* path")
-    #     plt.grid(True)
-    #     plt.axis("equal")
-    #     plot_car(ix, iy, iyaw)
-    #     plt.pause(0.0001)
-    # plt.plot(ox, oy, ".k")
-    # plt.grid(True)
-    # plt.axis("equal")
     plt.show()
 
     xx, yy, rr = path.fbpdx, path.fbpdy, path.radiuses
