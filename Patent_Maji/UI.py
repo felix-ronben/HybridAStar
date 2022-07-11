@@ -1,5 +1,3 @@
-from fileinput import filename
-import imp
 import tkinter as tk
 from tkinter import filedialog
 from hybrid_a_star_change_move import UI_call
