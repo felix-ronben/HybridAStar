@@ -18,7 +18,7 @@ LB = 1.0  # distance from rear to vehicle back end
 MAX_STEER = 0.6  # [rad] maximum steering angle
 
 WBUBBLE_DIST = (LF - LB) / 2.0
-WBUBBLE_R = sqrt(((LF + LB) / 2.0)**2 + 1)
+WBUBBLE_R = 0.99
 
 # vehicle rectangle verticles
 VRX = [LF, LF, -LB, -LB, LF]
@@ -27,17 +27,20 @@ VRY = [W / 2, -W / 2, -W / 2, W / 2, W / 2]
 
 def check_car_collision(xlist, ylist, yawlist, ox, oy, kdtree):
     for x, y, yaw in zip(xlist, ylist, yawlist):
-        cx = x + WBUBBLE_DIST * cos(yaw)
-        cy = y + WBUBBLE_DIST * sin(yaw)
+        # cx = x + WBUBBLE_DIST * cos(yaw)
+        # cy = y + WBUBBLE_DIST * sin(yaw)
+        cx = x
+        cy = y
 
         ids = kdtree.search_in_distance([cx, cy], WBUBBLE_R)
 
-        if not ids:
-            continue
+        if ids:
+            # continue
+            return False
 
-        if not rectangle_check(x, y, yaw,
-                               [ox[i] for i in ids], [oy[i] for i in ids]):
-            return False  # collision
+        # if not rectangle_check(x, y, yaw,
+        #                        [ox[i] for i in ids], [oy[i] for i in ids]):
+        #     return False  # collision
 
     return True  # no collision
 

@@ -22,14 +22,13 @@ except:
 
 
 XY_GRID_RESOLUTION = 1.0  # [m]
-YAW_GRID_RESOLUTION = np.deg2rad(0.5)  # [rad]
-MOTION_RESOLUTION = 0.1  # [m] path interporate resolution
+YAW_GRID_RESOLUTION = np.deg2rad(0.1)  # [rad]
+MOTION_RESOLUTION = 0.5  # [m] path interporate resolution
 N_STEER = 20  # number of steer command
-H_COST = 1.0
 VR = 1.0  # robot radius
 
-STEER_COST = 1  # steer angle change penalty cost
-H_COST = 1  # Heuristic cost
+STEER_COST = 0.4  # steer angle change penalty cost
+H_COST = 0.98  # Heuristic cost
 LEN_SPIRAL = 2  # 缓和曲线长度
 
 MIN_LEN_CURV = 9
@@ -124,8 +123,8 @@ class Config:
         self.maxx = round(max_x_m / xyreso)
         self.maxy = round(max_y_m / xyreso)
 
-        self.xw = round(self.maxx - self.minx)
-        self.yw = round(self.maxy - self.miny)
+        self.xw = round(self.maxx - self.minx)+1
+        self.yw = round(self.maxy - self.miny)+1
 
         self.minyaw = round(- math.pi / yawreso) - 1
         self.maxyaw = round(math.pi / yawreso)
@@ -221,6 +220,7 @@ def calc_next_node(current, radius, config, ox, oy, kdtree, closelist):
                 pind=calc_index(current, config),
                 cost=cost, radius=radius, catogory=cato, lens=lens_new)
 
+    # print('current.cost={}, addedcost={}, total cost={}'.format(current.cost,addedcost,cost))
     return node
 
 
@@ -389,24 +389,16 @@ def update_node_with_analystic_expantion(current, goal,
         fy = apath.y[1:]
         fyaw = apath.yaw[1:]
 
-        for i in range(len(apath.cur_type)):
-            if apath.cur_type[i] == -1:
-                plt.plot(apath.x[i],apath.y[i],'.b')
-            elif apath.cur_type[i] == 0:
-                plt.plot(apath.x[i],apath.y[i],'.r')
-            else:
-                plt.plot(apath.x[i],apath.y[i],'.g')
-
         fcost = current.cost + calc_rs_path_cost(apath)
         fpind = calc_index(current, c)
-        lens = sum(apath.lengths)
+        lens = sum(apath.lengths) + current.lens
         
         fpath = Node(current.xind, current.yind, current.yawind,
                      fx, fy, fyaw,
                      cost=fcost, pind=fpind, radius=apath.rr, lens = lens)
-        return True, fpath
+        return True, fpath, apath
 
-    return False, None
+    return False, None, None
 
 
 def calc_rs_path_cost(rspath):
@@ -416,9 +408,9 @@ def calc_rs_path_cost(rspath):
         cost += l
 
     # steer penalyty
-    for ctype in rspath.ctypes:
-        if ctype != "S":  # curve
-            cost += STEER_COST * abs(rspath.curvature*MIN_R)
+    # for ctype in rspath.ctypes:
+    #     if ctype != "S":  # curve
+    #         cost += STEER_COST * abs(rspath.curvature*MIN_R)
 
     return cost
 
@@ -470,7 +462,7 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
     openList[calc_index(nstart, config)] = nstart
     heapq.heappush(pq, (calc_cost(nstart, h_dp, ngoal, config),
                         calc_index(nstart, config)))
-
+    best_path, n_path, best_apath = None, 0, None  # apath是rs中的path，包含曲率信息等，path是文件中的，是Node类
     while True:
         if not openList:
             print("Error: Cannot find path, No open set")
@@ -487,17 +479,34 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
             # plt.plot(current.xlist[-1], current.ylist[-1], "xc")
             if len(closedList.keys()) % 10000 == 0:
                 plt.plot(current.xlist[-1], current.ylist[-1], "xc")
-                plt.pause(0.001)
+                plt.pause(0.1)
 
         isupdated = None
         # abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 10:
         if check_rs_permition(current, closedList, ngoal) and \
-                abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 30:
-            isupdated, fpath = update_node_with_analystic_expantion(
+                abs(current.xlist[-1]-ngoal.xlist[-1])+abs(current.ylist[-1]-ngoal.ylist[-1]) < 40:
+            isupdated, fpath, apath = update_node_with_analystic_expantion(
                 current, ngoal, config, ox, oy, obkdtree)
 
         if isupdated:
-            break
+            if n_path == 0:
+                best_path = fpath
+                best_apath = apath
+            if best_path.lens > fpath.lens:
+                best_path = fpath
+                best_apath = apath
+            n_path = n_path + 1
+            print('lens current is {}'.format(fpath.lens))
+            print('lens best is {}'.format(best_path.lens))
+            if n_path > 100:  # 找到一定数量的path，才跳出，返回最优的那个
+                for i in range(len(best_apath.cur_type)):
+                    if best_apath.cur_type[i] == -1:
+                        plt.plot(best_apath.x[i],best_apath.y[i],'.b')
+                    elif best_apath.cur_type[i] == 0:
+                        plt.plot(best_apath.x[i],best_apath.y[i],'.r')
+                    else:
+                        plt.plot(best_apath.x[i],best_apath.y[i],'.g')
+                break
 
         for neighbor in get_neighbors(current, config, ox, oy, obkdtree, closedList):
             neighbor_index = calc_index(neighbor, config)
@@ -509,8 +518,10 @@ def hybrid_a_star_planning(start, goal, ox, oy, xyreso, yawreso):
                     pq, (calc_cost(neighbor, h_dp, ngoal, config),
                          neighbor_index))
                 openList[neighbor_index] = neighbor
+            # plt.plot(openList[neighbor_index].xlist[-1], openList[neighbor_index].ylist[-1], "xg")
+            # plt.pause(0.001)
 
-    path = get_final_path(closedList, fpath, nstart, ngoal)
+    path = get_final_path(closedList, best_path, nstart, ngoal)
     return path
 
 
@@ -518,6 +529,7 @@ def calc_cost(n, h_dp, goal, c):
     ind = (n.yind - c.miny) * c.xw + (n.xind - c.minx)
     if ind not in h_dp:
         return n.cost + 999999999  # collision cost
+    # print('n_cost={},h_cost={},total_cost={}'.format(n.cost,H_COST * h_dp[ind].cost,n.cost + H_COST * h_dp[ind].cost))
     return n.cost + H_COST * h_dp[ind].cost
 
 
@@ -579,8 +591,7 @@ def get_final_path(closed, ngoal, nstart, ngoal_true):
     path.fbpdx = fbpdx
     path.fbpdy = fbpdy
     path.radiuses = radiuss
-    len_total = ngoal.lens + closed[ngoal.pind].lens
-    print('final lens is {}'.format(len_total))
+    # print('final lens is {}'.format(ngoal.lens))
     return path
 
 
@@ -591,8 +602,6 @@ def get_intersect_point(x1, y1, yaw1, x2, y2, yaw2):
     x = ((y2-y1)+(k1*x1-k2*x2))/(k1-k2)
     y = (k1*k2*(x2-x1)+(k2*y1-k1*y2))/(k2-k1)
     return x, y
-
-
 
 
 def verify_index(node, c):
@@ -621,6 +630,7 @@ def UI_call(sx, sy, syaw, gx, gy, gyaw, min_r,  min_curv, len_spiral,
     global LEN_SPIRAL, MIN_SEG, H_COST, STEER_COST, MIN_R
     YAW_GRID_RESOLUTION, MOTION_RESOLUTION, N_STEER = np.deg2rad(angle_res), path_res, direction_size
     H_COST, STEER_COST, LEN_SPIRAL, MIN_R, MIN_SEG = h_para, turn_pena, len_spiral, min_r, (min_curv/1.5)+1
+    print(YAW_GRID_RESOLUTION, MOTION_RESOLUTION, N_STEER,H_COST, STEER_COST, LEN_SPIRAL, MIN_R, MIN_SEG)
     
     ox, oy = [], []
     data_filename = filename
@@ -669,7 +679,7 @@ def main():
     # start = [53.21, 74.08, np.deg2rad(180.0)]
     # goal = [88.26, 130.29, np.deg2rad(180.0)]
     start = [88.26, 130.29, np.deg2rad(0.0)]
-    goal = [53.21, 74.08, np.deg2rad(45.0)]
+    goal = [53.21, 74.08, np.deg2rad(0.0)]
     # goal = [119.26, 40.29, np.deg2rad(90.0)]
     # start = [40.0, 20.0, np.deg2rad(90.0)]
     # goal = [35.0, 20.0, np.deg2rad(-90.0)]
@@ -681,6 +691,7 @@ def main():
     plt.grid(True)
     plt.axis("equal")
 
+    print(YAW_GRID_RESOLUTION, MOTION_RESOLUTION, N_STEER,H_COST, STEER_COST, LEN_SPIRAL, MIN_R, MIN_SEG)
     path = hybrid_a_star_planning(
         start, goal, ox, oy, XY_GRID_RESOLUTION, YAW_GRID_RESOLUTION)
 

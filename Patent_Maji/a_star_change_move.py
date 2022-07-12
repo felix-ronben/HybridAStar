@@ -15,7 +15,6 @@ import xlrd
 
 show_animation = False
 
-
 class Node:
 
     def __init__(self, x, y, cost, pind):
@@ -32,6 +31,8 @@ def calc_final_path(ngoal, closedset, reso):
     # generate final course
     rx, ry = [ngoal.x * reso], [ngoal.y * reso]
     pind = ngoal.pind
+    if show_animation:
+        print('total cost is {}'.format(ngoal.cost))
     while pind != -1:
         n = closedset[pind]
         rx.append(n.x * reso)
@@ -107,6 +108,11 @@ def dp_planning(sx, sy, gx, gy, ox, oy, reso, rr):
 
     rx, ry = calc_final_path(closedset[calc_index(
         nstart, xw, minx, miny)], closedset, reso)
+    
+    if show_animation:  # pragma: no cover
+        plt.plot(rx, ry, "-r")
+        # artists.append(frame)
+        plt.pause(0.001)
 
     return rx, ry, closedset
 
@@ -185,7 +191,7 @@ def main():
 
     ox, oy = [], []
 
-    data_filename = './Patent_Maji/maji.xls'
+    data_filename = 'input.xls'
     work_Book = xlrd.open_workbook(data_filename)
     sheet = work_Book.sheet_by_name('Sheet1')
     for i in range(0, sheet.nrows):
@@ -202,11 +208,6 @@ def main():
         plt.axis("equal")
 
     rx, ry, _ = dp_planning(sx, sy, gx, gy, ox, oy, grid_size, robot_size)
-
-    if show_animation:  # pragma: no cover
-        plt.plot(rx, ry, "-r")
-        # artists.append(frame)
-        plt.show()
 
 
 if __name__ == '__main__':
